@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from research_agent import ResearchConfig, _extract_json
+from research_agent import ResearchConfig, _extract_json, _fill_template
 from search_providers.base import SearchProvider
 
 
@@ -105,12 +105,12 @@ class AnalysisAgent:
     def _analyse_website(self, company_name: str, website_url: str) -> Dict[str, Any]:
         cfg = self.config
 
-        prompt = self._web_template.format(
+        prompt = _fill_template(self._web_template,
             company_name=company_name,
             website_url=website_url,
             service_area=cfg.service_area,
             commissioner=cfg.commissioner,
-            geographic_area=cfg.geographic_area,
+            geographic_area=cfg.geographic_area or "Not specified",
             max_pages=cfg.max_pages_per_website,
         )
 
@@ -157,11 +157,11 @@ class AnalysisAgent:
             website_analyses=website_analyses,
         )
 
-        prompt = self._bench_template.format(
+        prompt = _fill_template(self._bench_template,
             target_company=cfg.target_company,
             commissioner=cfg.commissioner,
             service_area=cfg.service_area,
-            geographic_area=cfg.geographic_area,
+            geographic_area=cfg.geographic_area or "Not specified",
             companies_list=companies_list,
             research_summary=research_summary,
         )

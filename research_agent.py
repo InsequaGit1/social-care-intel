@@ -150,7 +150,7 @@ class ResearchAgent:
                  f"and {cfg.max_competitors} competitors with fuller detail"
         )
 
-        return self._prompt_template.format(
+        return _fill_template(self._prompt_template,
             commissioner=cfg.commissioner,
             service_area=cfg.service_area,
             target_company=cfg.target_company,
@@ -166,6 +166,17 @@ class ResearchAgent:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _fill_template(template: str, **kwargs) -> str:
+    """
+    Safe template substitution that only replaces known {key} placeholders.
+    Unlike str.format(), this leaves all other curly braces (e.g. JSON in
+    the prompt) untouched, preventing KeyError on JSON schema examples.
+    """
+    for key, value in kwargs.items():
+        template = template.replace("{" + key + "}", str(value))
+    return template
+
 
 def _extract_json(text: str) -> Dict[str, Any]:
     """
