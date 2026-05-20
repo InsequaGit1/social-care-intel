@@ -208,6 +208,26 @@ class DashboardRenderer:
                 if p.get("notes"):
                     st.markdown(f"**Notes:** {p['notes']}")
 
+                awarded_providers = p.get("awarded_providers", [])
+                shortlisted_providers = p.get("shortlisted_providers", [])
+                if awarded_providers or shortlisted_providers:
+                    st.markdown("**Provider drill-down:**")
+                    if awarded_providers:
+                        st.markdown("*Awarded providers:*")
+                        for ap in awarded_providers:
+                            lot = f" — Lot: {ap.get('lot')}" if ap.get('lot') else ""
+                            url = ap.get('evidence_url', '')
+                            if url and url.startswith('http'):
+                                st.markdown(f"  - {ap.get('name', 'Unknown')}{lot} [↗]({url})")
+                            else:
+                                st.markdown(f"  - {ap.get('name', 'Unknown')}{lot}")
+                    if shortlisted_providers:
+                        st.markdown("*Shortlisted:*")
+                        for sp in shortlisted_providers:
+                            st.markdown(f"  - {sp.get('name', 'Unknown')}")
+                    if p.get("drilldown_notes"):
+                        st.caption(f"Drilldown notes: {p['drilldown_notes']}")
+
                 src_url = p.get("source_url", "")
                 if src_url and src_url.startswith("http"):
                     st.markdown(f"**Source:** [{src_url}]({src_url})")

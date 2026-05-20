@@ -14,13 +14,15 @@ Geographic Area: {geographic_area}
 
 === YOUR TASK ===
 Produce:
-1. A 3–5 sentence executive summary of the competitive landscape and the target company's position
-2. 5–8 prioritised bid positioning recommendations
-3. Up to 5 evidence gaps that would weaken a bid if not closed
+1. A 4–6 sentence executive summary of the competitive landscape, target company's position, and the 2-3 most decisive factors for this bid
+2. 8–12 prioritised bid positioning recommendations — each MUST name specific evidence and ideally name a specific competitor weakness it addresses
+3. 3–6 evidence gaps that would weaken a bid if not closed, with concrete actions
 
 === GUARDRAILS ===
 - Base recommendations on evidence in the scored data above. Do NOT invent strengths or weaknesses.
-- Be specific. Avoid generic advice like "emphasise quality" — say which evidence to use.
+- Each bid positioning recommendation must be ACTIONABLE — say what to write/include in the bid, not just "emphasise X".
+- Where possible, link a recommendation to a specific competitor: "Competitor X scored 1/5 on digital — your investment in [evidence] differentiates."
+- Avoid generic platitudes. Wrong: "emphasise quality". Right: "Cite your CQC Good rating from [date] alongside your specific reablement outcomes data to counter competitors who only mention regulatory compliance."
 - Mark any inference clearly.
 
 === OUTPUT FORMAT ===

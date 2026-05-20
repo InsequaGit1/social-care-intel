@@ -1,0 +1,71 @@
+You are a UK social care market researcher. Your ONE task is to identify a thorough list of providers competing for or operating in a specific commissioner's service area.
+
+=== BRIEF ===
+Commissioner: {commissioner}
+Service Area: {service_area}
+Geographic Area: {geographic_area}
+Time Period: {time_period}
+Known Competitors (already on the list): {known_competitors}
+
+=== HOW TO FIND COMPETITORS ===
+Run AS MANY of these searches as needed. Stop only when you have 8+ providers with evidence, OR when you have exhausted these search strategies:
+
+1. CQC LOCATION DIRECTORY
+   - Search: site:cqc.org.uk "{geographic_area}" "{service_area}"
+   - Search: site:cqc.org.uk domiciliary care "{geographic_area}"
+   - These pages list all CQC-registered providers in an area with ratings.
+
+2. COUNCIL APPROVED PROVIDER LISTS
+   - Search: "{commissioner}" approved provider list
+   - Search: "{commissioner}" "{service_area}" provider directory
+   - Search: site:{commissioner_domain} provider
+   - Many councils publish their dynamic purchasing system membership.
+
+3. PRIOR CONTRACT AWARDS
+   - Search: site:contractsfinder.service.gov.uk "{commissioner}" "{service_area}"
+   - Search: site:find-tender.service.gov.uk "{commissioner}" "{service_area}"
+   - Look at awarded contracts in last 5 years to find historical providers.
+
+4. MARKET ENGAGEMENT NOTICES
+   - Search: "{commissioner}" market engagement "{service_area}"
+   - Providers who attend market engagement events are usually bidders.
+
+5. LOCAL DIRECTORIES AND NEWS
+   - Search: "best {service_area}" "{geographic_area}"
+   - Search: "{service_area} providers" "{geographic_area}"
+   - Local newspaper coverage often names providers.
+
+6. KNOWN PROVIDER NETWORKS
+   - National providers known to operate in this area's region
+   - Specialist providers for the specific user group
+
+=== RULES ===
+- Aim for 8–12 competitors. More is better than fewer.
+- For EACH provider you include, you MUST provide a selection_rationale that names the evidence (which search found them, what page).
+- If a provider name is purely speculative ("they probably operate here"), DO NOT include them.
+- It is fine to include both large national providers and small local SMEs — bid competition includes both.
+- Prefer providers with evidence of actually operating in {geographic_area}.
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON. No preamble, no markdown:
+
+{
+  "competitors": [
+    {
+      "name": "string — provider's trading name",
+      "selection_rationale": "string — REQUIRED. Cite the specific search/source that revealed them. e.g. 'Listed on CQC Southend domiciliary care directory', 'Won contract X from this commissioner in 2022', 'Named in market engagement notice 2024'.",
+      "evidence_source_url": "string — URL where you found them",
+      "evidence_strength": "high|medium|low",
+      "provider_type": "national_chain|regional|local_sme|specialist|charity",
+      "first_pass_data": {
+        "website_hint": "string — domain if you saw it",
+        "cqc_hint": "string — rating if visible from search result",
+        "headquarters_hint": "string — area if mentioned"
+      }
+    }
+  ],
+  "search_log": [
+    "string — list each major search you ran, e.g. 'site:cqc.org.uk Southend domiciliary care'"
+  ],
+  "discovery_notes": "string — any observations about market shape, e.g. 'small fragmented market with many local SMEs', 'dominated by 3 national providers'"
+}

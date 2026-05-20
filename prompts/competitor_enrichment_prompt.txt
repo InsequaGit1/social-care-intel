@@ -14,9 +14,12 @@ Context (for filtering relevance):
 
 You MUST run these specific searches and extract the data from the results:
 
-1. OFFICIAL WEBSITE
-   Search: "{company_name}" official website UK social care
-   Find their main UK corporate website (not a directory listing).
+1. OFFICIAL WEBSITE — try ALL of these in order until you find it:
+   a. "{company_name}" official website UK
+   b. "{company_name}" homecare "{geographic_area}"
+   c. "{company_name}" care services .co.uk
+   d. "{company_name}" + their CQC profile (often links to website)
+   Even small local providers usually have a website or at least a Facebook page. Don't give up after one search.
 
 2. CQC RATING
    Search: site:cqc.org.uk "{company_name}"
@@ -70,7 +73,8 @@ Return ONLY a valid JSON object. No preamble, no markdown:
     "website_found": true,
     "cqc_found": true,
     "companies_house_found": true,
-    "contracts_found": true
+    "contracts_found": true,
+    "searches_run": ["list of search queries you actually executed"]
   },
   "source_urls": ["all URLs used"],
   "notes": "string — any caveats"

@@ -69,12 +69,16 @@ class ResearchAgent:
 
     PROMPT_PATH = Path(__file__).parent / "prompts" / "master_research_prompt.txt"
     ENRICH_PATH = Path(__file__).parent / "prompts" / "competitor_enrichment_prompt.txt"
+    DISCOVERY_PATH = Path(__file__).parent / "prompts" / "competitor_discovery_prompt.txt"
+    DRILLDOWN_PATH = Path(__file__).parent / "prompts" / "provider_drilldown_prompt.txt"
 
     def __init__(self, config: ResearchConfig, provider: SearchProvider):
         self.config = config
         self.provider = provider
         self._prompt_template = self.PROMPT_PATH.read_text(encoding="utf-8")
         self._enrich_template = self.ENRICH_PATH.read_text(encoding="utf-8")
+        self._discovery_template = self.DISCOVERY_PATH.read_text(encoding="utf-8")
+        self._drilldown_template = self.DRILLDOWN_PATH.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -84,8 +88,16 @@ class ResearchAgent:
         cfg = self.config
 
         geo_label = cfg.geographic_area or "(area to be inferred from commissioner)"
-        status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
 
+        # ---- Phase 0 (Deep only): Dedicated competitor discovery ----
+        discovered_competitors: List[Dict] = []
+        if not cfg.is_quick:
+            status_callback(f"  🎯 Discovering providers in **{geo_label}** for **{cfg.service_area}**…")
+            discovered_competitors = self._discover_competitors(status_callback)
+            status_callback(f"  Discovery returned {len(discovered_competitors)} providers")
+
+        # ---- Phase 1: Master research (procurement + priorities + competitors) ----
+        status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
         prompt = self._build_prompt()
         result = self.provider.research(prompt, max_tokens=7000)
 
@@ -115,10 +127,35 @@ class ResearchAgent:
 
         # Enforce depth limits
         procurement = raw_data.get("procurement", [])[: cfg.max_procurement_notices]
-        competitors = raw_data.get("competitors", [])[: cfg.max_competitors]
+        master_competitors = raw_data.get("competitors", [])
         sources = combined_sources[: cfg.max_sources]
 
-        # Deep Scan only — enrich each competitor with focused targeted searches
+        # Merge discovered competitors with master research competitors (dedupe by name)
+        competitors = _merge_competitors(discovered_competitors, master_competitors)[: cfg.max_competitors]
+        status_callback(f"  Combined competitor list: {len(competitors)} unique providers")
+
+        # ---- Phase 1.5 (Deep only): Drill down on multi-provider contracts ----
+        if not cfg.is_quick and procurement:
+            multi = [p for p in procurement if _looks_multi_provider(p)]
+            for p in multi[:3]:  # Cap at 3 to bound cost
+                status_callback(f"  📋 Drilling down on contract **{p.get('title', '')[:60]}**…")
+                drill = self._drilldown_contract(p)
+                # Stash awarded provider list on the procurement record
+                p["awarded_providers"] = drill.get("awarded_providers", [])
+                p["shortlisted_providers"] = drill.get("shortlisted_providers", [])
+                p["drilldown_notes"] = drill.get("notes", "")
+                # Promote drilled-down provider names into competitor list (if not already there)
+                for ap in drill.get("awarded_providers", []) + drill.get("shortlisted_providers", []):
+                    name = ap.get("name", "").strip()
+                    if name and not any(c.get("name", "").lower() == name.lower() for c in competitors):
+                        competitors.append({
+                            "name": name,
+                            "selection_rationale": f"Drilled from contract '{p.get('title', '')}' — {ap.get('evidence_url', '')}",
+                            "source_urls": [ap.get("evidence_url", "")],
+                        })
+            competitors = competitors[: cfg.max_competitors]
+
+        # ---- Phase 2 (Deep only): Enrich each competitor with targeted searches ----
         if not cfg.is_quick and competitors:
             status_callback(f"  🔎 Deep enrichment: running targeted searches on {len(competitors)} competitors…")
             enriched = []
@@ -126,8 +163,16 @@ class ResearchAgent:
                 name = comp.get("name", "Unknown")
                 status_callback(f"    [{i}/{len(competitors)}] Enriching **{name}** — website, CQC, Companies House, contracts…")
                 enriched_comp = self._enrich_competitor(comp)
+                # Always ensure enrichment_status is present so dashboard can show it
+                if "enrichment_status" not in enriched_comp:
+                    enriched_comp["enrichment_status"] = {
+                        "website_found": bool(enriched_comp.get("website") and enriched_comp.get("website") not in ("Unknown", "")),
+                        "cqc_found": bool(enriched_comp.get("cqc_profile_url")),
+                        "companies_house_found": bool(enriched_comp.get("companies_house_number") and enriched_comp.get("companies_house_number") != "Unknown"),
+                        "contracts_found": bool(enriched_comp.get("known_contracts_with_commissioner")),
+                        "searches_run": [],
+                    }
                 enriched.append(enriched_comp)
-                # Roll up any new sources
                 for url in enriched_comp.get("source_urls", []):
                     if url and not any(s.get("url") == url for s in sources):
                         sources.append({"url": url, "title": f"{name} enrichment", "used_for": "Competitor enrichment"})
@@ -157,6 +202,76 @@ class ResearchAgent:
         }
 
         return output
+
+    # ------------------------------------------------------------------
+    # Phase 0: Dedicated competitor discovery (Deep Scan only)
+    # ------------------------------------------------------------------
+
+    def _discover_competitors(self, status_callback: StatusCallback = _noop) -> List[Dict[str, Any]]:
+        cfg = self.config
+        known = ", ".join(cfg.known_competitors) if cfg.known_competitors else "None"
+
+        # Try to extract a commissioner domain hint for site: searches
+        commissioner_domain = ""
+        if cfg.commissioner:
+            slug = cfg.commissioner.lower().replace(" ", "")
+            commissioner_domain = f"{slug}.gov.uk"
+
+        prompt = _fill_template(self._discovery_template,
+            commissioner=cfg.commissioner,
+            commissioner_domain=commissioner_domain,
+            service_area=cfg.service_area,
+            geographic_area=cfg.geographic_area or "the commissioner's area",
+            time_period=cfg.time_period,
+            known_competitors=known,
+        )
+
+        result = self.provider.research(prompt, max_tokens=5000)
+        if not result.ok:
+            status_callback(f"  ⚠️ Discovery call failed: {result.error}")
+            return []
+
+        data = _extract_json(result.content)
+        if not data:
+            return []
+
+        discovered = data.get("competitors", [])
+        # Flatten first_pass_data into top-level hints
+        for c in discovered:
+            hints = c.pop("first_pass_data", {}) or {}
+            if hints.get("website_hint"):
+                c["website"] = hints["website_hint"]
+            if hints.get("cqc_hint"):
+                c["cqc_rating"] = hints["cqc_hint"]
+            if hints.get("headquarters_hint"):
+                c["headquarters"] = hints["headquarters_hint"]
+            # Map evidence_source_url -> source_urls list
+            ev = c.pop("evidence_source_url", "")
+            if ev:
+                c.setdefault("source_urls", []).append(ev)
+
+        return discovered
+
+    # ------------------------------------------------------------------
+    # Phase 1.5: Procurement provider drill-down (Deep Scan only)
+    # ------------------------------------------------------------------
+
+    def _drilldown_contract(self, procurement: Dict[str, Any]) -> Dict[str, Any]:
+        cfg = self.config
+        prompt = _fill_template(self._drilldown_template,
+            contract_title=procurement.get("title", ""),
+            commissioner=cfg.commissioner,
+            source_url=procurement.get("source_url", ""),
+            contract_type=procurement.get("type", ""),
+            contract_value=procurement.get("value", ""),
+        )
+
+        result = self.provider.research(prompt, max_tokens=3000)
+        if not result.ok:
+            return {"awarded_providers": [], "shortlisted_providers": [], "notes": f"Drilldown failed: {result.error}"}
+
+        data = _extract_json(result.content)
+        return data if data else {"awarded_providers": [], "shortlisted_providers": [], "notes": "No JSON returned"}
 
     # ------------------------------------------------------------------
     # Per-competitor enrichment (Deep Scan only)
@@ -278,6 +393,43 @@ def _extract_json(text: str) -> Dict[str, Any]:
             pass
 
     return {}
+
+
+def _looks_multi_provider(procurement: Dict[str, Any]) -> bool:
+    """Heuristic: should we drill down on this contract?"""
+    awarded_to = (procurement.get("awarded_to") or "").lower()
+    triggers = ("multiple", "various", "tbc", "not yet awarded", "framework",
+                "to be announced", "see notice", "list", "panel")
+    if any(t in awarded_to for t in triggers):
+        return True
+    if not awarded_to or awarded_to == "unknown":
+        return True
+    if procurement.get("type", "").lower() in ("framework", "dps"):
+        return True
+    return False
+
+
+def _merge_competitors(discovered: List[Dict], master: List[Dict]) -> List[Dict]:
+    """Dedupe by name (case insensitive). Discovered takes precedence for selection_rationale."""
+    by_name: Dict[str, Dict] = {}
+    for c in discovered:
+        name = (c.get("name") or "").strip()
+        if name:
+            by_name[name.lower()] = dict(c)
+    for c in master:
+        name = (c.get("name") or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in by_name:
+            # Merge: keep discovered's rationale, fill missing fields from master
+            existing = by_name[key]
+            for k, v in c.items():
+                if k not in existing or not existing[k]:
+                    existing[k] = v
+        else:
+            by_name[key] = dict(c)
+    return list(by_name.values())
 
 
 def _merge_sources(existing: List[dict], new_sources: List[dict]) -> List[dict]:
