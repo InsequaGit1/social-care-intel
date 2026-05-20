@@ -1,0 +1,92 @@
+You are an expert UK social care bid writer and market analyst. Your task is to analyse a provider's website from a commissioner's perspective to extract bid intelligence.
+
+USE YOUR WEB SEARCH OR BROWSING CAPABILITY to access the website and any linked pages. Focus on:
+- Home page and 'About us' page
+- Services pages
+- Quality, outcomes, and evidence pages
+- Case studies and testimonials
+- News and awards section
+- Any commissioner or local authority specific content
+
+=== ANALYSIS BRIEF ===
+Company Name: {company_name}
+Website URL: {website_url}
+Service Area Context: {service_area}
+Commissioner Context: {commissioner}
+Geographic Context: {geographic_area}
+Pages limit: {max_pages} pages maximum
+
+=== IMPORTANT DISTINCTIONS ===
+You MUST classify all claims into one of four categories:
+- EXPLICIT: Directly stated on the website, verifiable by reading the page
+- EVIDENCED: Claim backed by specific evidence on site (e.g. CQC rating cited, case study with outcomes data, award name)
+- UNSUPPORTED: Marketing language with no evidence provided (e.g. "leading provider", "excellent outcomes", "expert team")
+- ANALYST_INFERENCE: Your interpretation of what the website implies — not stated explicitly
+
+=== OUTPUT FORMAT ===
+Return ONLY a valid JSON object. No preamble, no markdown fences:
+
+{
+  "company_name": "string",
+  "website_url": "string",
+  "accessible": true,
+  "pages_reviewed": ["list of URLs reviewed"],
+  "positioning": {
+    "headline_proposition": "string — main message on homepage",
+    "target_commissioner_message": "string — what commissioners are being told",
+    "differentiators": ["list of claimed differentiators"],
+    "category": "string — e.g. 'National specialist', 'Local community provider', 'Quality-led SME'"
+  },
+  "service_offer": {
+    "services_listed": ["list of services"],
+    "service_area_match": "string — how well does this match the target service area",
+    "geographic_coverage_claimed": ["list of areas"]
+  },
+  "evidence_quality": {
+    "cqc_rating_cited": "string — rating mentioned or 'Not cited'",
+    "outcomes_data_present": true,
+    "outcomes_description": "string — what outcomes data is present if any",
+    "case_studies_count": 0,
+    "awards_mentioned": ["list of awards"],
+    "accreditations": ["list of accreditations, e.g. ISO, Investors in People"],
+    "overall_evidence_quality": "Strong|Moderate|Weak|Very weak"
+  },
+  "commissioner_relevance": {
+    "local_authority_mentioned": true,
+    "commissioner_named": "string — name of commissioner if mentioned, else ''",
+    "local_contract_references": ["list of local contract references found"],
+    "local_relevance_score": "High|Medium|Low"
+  },
+  "workforce_and_capacity": {
+    "staff_numbers_cited": "string or 'Not stated'",
+    "training_and_development_mentioned": true,
+    "specialist_skills_claimed": ["list"],
+    "mobilisation_track_record": "string — any evidence of mobilising new services"
+  },
+  "digital_and_innovation": {
+    "technology_mentioned": ["list of tech or digital tools mentioned"],
+    "innovation_claims": ["list"],
+    "data_and_reporting_mentioned": true
+  },
+  "social_value": {
+    "social_value_mentioned": true,
+    "claims": ["list of social value commitments or claims"],
+    "evidence_level": "Evidenced|Claimed|Not mentioned"
+  },
+  "claims_by_type": {
+    "explicit": ["list of explicit verifiable claims"],
+    "evidenced": ["list of evidence-backed claims"],
+    "unsupported": ["list of unsupported marketing claims"],
+    "analyst_inference": ["list of analyst inferences"]
+  },
+  "strengths": ["list of genuine strengths identified from website"],
+  "weaknesses_and_gaps": ["list of weaknesses, omissions, or credibility gaps"],
+  "bid_positioning_implications": [
+    {
+      "implication": "string — what this means for a bid against this company",
+      "action": "string — suggested response or counter-positioning"
+    }
+  ],
+  "pages_accessed": ["list of URLs accessed"],
+  "access_notes": "string — any pages that could not be accessed"
+}

@@ -1,0 +1,124 @@
+You are an expert UK social care bid strategist. Using the research data provided, score the target company and each identified competitor across a standard set of bid evaluation criteria.
+
+=== CONTEXT ===
+Target Company: {target_company}
+Commissioner: {commissioner}
+Service Area: {service_area}
+Geographic Area: {geographic_area}
+
+=== COMPANIES TO SCORE ===
+{companies_list}
+
+=== RESEARCH DATA ===
+{research_summary}
+
+=== SCORING CRITERIA AND DEFINITIONS ===
+
+Score each company on a 1–5 scale for each criterion below.
+1 = Very weak / No evidence
+2 = Below average / Limited evidence
+3 = Average / Some evidence
+4 = Strong / Good evidence
+5 = Exceptional / Compelling evidence
+
+Criteria:
+
+1. SERVICE_MATCH
+   How closely does the company's services match the specific service area and commissioner need?
+
+2. LOCAL_PRESENCE
+   Does the company have established operations, staff, or contracts in the geographic area?
+
+3. COMMISSIONER_RELATIONSHIP
+   Is there evidence of an existing or historic working relationship with this commissioner?
+
+4. CONTRACT_HISTORY
+   What is the quality and relevance of the company's contract history in this or similar service areas?
+
+5. QUALITY_COMPLIANCE
+   What is the evidence of quality standards, compliance frameworks, and regulatory good standing?
+
+6. CQC_POSITION
+   What is the CQC rating and recent inspection trajectory? (1 = Inadequate/unknown, 5 = Outstanding)
+
+7. WORKFORCE_CAPACITY
+   Is there evidence of sufficient, skilled workforce to deliver and mobilise this contract?
+
+8. MOBILISATION_CAPABILITY
+   Is there evidence of successfully mobilising new or transferred contracts at relevant scale?
+
+9. DIGITAL_INNOVATION
+   Is there evidence of digital systems, data reporting, or innovation relevant to commissioners?
+
+10. SPECIALIST_CAPABILITY
+    Does the company have specialist skills, accreditations, or evidence relevant to the service area?
+
+11. SOCIAL_VALUE
+    Is there clear, evidenced social value delivery (employment, training, community benefit)?
+
+12. PARTNERSHIP_WORKING
+    Is there evidence of partnerships with NHS, local authorities, VCS organisations, or peer providers?
+
+13. WEBSITE_CREDIBILITY
+    How credible and evidence-based is the company's public-facing profile?
+
+14. OVERALL_COMPETITOR_STRENGTH
+    Holistic assessment of how strong a competitor this company is for this opportunity.
+
+=== GUARDRAILS ===
+- Base every score on evidence from the research data provided
+- If there is insufficient evidence, score 1-2 and note "No reliable public source found"
+- Do NOT infer scores from company size alone
+- Do NOT assume a rating without citing a source or reason
+- Mark any score that relies on inference as "analyst_inference: true"
+
+=== OUTPUT FORMAT ===
+Return ONLY a valid JSON object. No preamble, no markdown fences:
+
+{
+  "criteria": [
+    "service_match", "local_presence", "commissioner_relationship",
+    "contract_history", "quality_compliance", "cqc_position",
+    "workforce_capacity", "mobilisation_capability", "digital_innovation",
+    "specialist_capability", "social_value", "partnership_working",
+    "website_credibility", "overall_competitor_strength"
+  ],
+  "scores": {
+    "COMPANY_NAME": {
+      "service_match": {
+        "score": 0,
+        "justification": "string",
+        "source": "string — URL or 'No source found'",
+        "analyst_inference": false
+      },
+      "local_presence": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "commissioner_relationship": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "contract_history": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "quality_compliance": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "cqc_position": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "workforce_capacity": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "mobilisation_capability": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "digital_innovation": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "specialist_capability": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "social_value": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "partnership_working": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "website_credibility": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+      "overall_competitor_strength": { "score": 0, "justification": "", "source": "", "analyst_inference": false }
+    }
+  },
+  "bid_positioning_summary": [
+    {
+      "point": "string — key positioning recommendation",
+      "detail": "string — explanation and evidence basis",
+      "priority": "high|medium|low"
+    }
+  ],
+  "evidence_gaps": [
+    {
+      "area": "string — what is missing",
+      "detail": "string",
+      "suggested_action": "string"
+    }
+  ],
+  "executive_summary": "string — 3-5 sentence narrative summary of the competitive landscape and key strategic recommendations"
+}

@@ -1,0 +1,397 @@
+"""
+Social Care Competitor Intelligence Dashboard
+---------------------------------------------
+Local one-shot research tool. No database, no login, no hosted backend.
+Results are saved to the local outputs/ folder.
+
+Run with:  streamlit run app.py
+"""
+
+import json
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+import streamlit as st
+
+from research_agent import ResearchAgent, ResearchConfig
+from analysis_agent import AnalysisAgent
+from dashboard_renderer import DashboardRenderer
+from search_providers.llm_web import LLMWebProvider
+
+# ---------------------------------------------------------------------------
+# Page configuration
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="Social Care Competitor Intelligence",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+st.markdown("""
+<style>
+  .block-container { padding-top: 2rem; }
+  .main-header {
+    background: linear-gradient(135deg, #1a237e 0%, #283593 50%, #3949ab 100%);
+    padding: 1.5rem 2rem;
+    border-radius: 10px;
+    color: white;
+    margin-bottom: 1.5rem;
+  }
+  .main-header h1 { color: white; margin: 0; font-size: 1.6rem; }
+  .main-header p  { color: #c5cae9; margin: 0.3rem 0 0; font-size: 0.9rem; }
+  div[data-testid="stMetricValue"] { font-size: 1.1rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Provider config
+# ---------------------------------------------------------------------------
+
+PROVIDERS = {
+    "OpenAI": {
+        "models": ["gpt-4o", "gpt-4o-mini"],
+        "env_var": "OPENAI_API_KEY",
+        "note": "Uses the Responses API with web_search_preview grounding.",
+    },
+    "Gemini": {
+        "models": ["gemini-2.0-flash", "gemini-1.5-pro"],
+        "env_var": "GOOGLE_API_KEY",
+        "note": "Uses Google Search grounding via the google-genai SDK.",
+    },
+    "Claude": {
+        "models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+        "env_var": "ANTHROPIC_API_KEY",
+        "note": "Uses the web_search_20250305 built-in tool.",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    st.markdown("""
+    <div class="main-header">
+      <h1>🔍 Social Care Competitor Intelligence Dashboard</h1>
+      <p>UK social care market research — one-shot tool, runs locally, outputs saved to outputs/</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if "results" in st.session_state and st.session_state.results:
+        _show_results()
+    else:
+        _show_input_form()
+
+
+# ---------------------------------------------------------------------------
+# Input form
+# ---------------------------------------------------------------------------
+
+def _show_input_form():
+    st.markdown("### Research Brief")
+
+    with st.form("research_form", border=True):
+
+        # ---- Target & Context ------------------------------------------
+        st.markdown("#### Target & Context")
+        c1, c2 = st.columns(2)
+
+        with c1:
+            target_company = st.text_input(
+                "Target Company Name *",
+                placeholder="e.g. Acorn Care Services Ltd",
+            )
+            target_website = st.text_input(
+                "Target Company Website *",
+                placeholder="e.g. https://www.acorncare.co.uk",
+            )
+            commissioner = st.text_input(
+                "Commissioner / Local Authority / ICB *",
+                placeholder="e.g. Birmingham City Council",
+            )
+
+        with c2:
+            service_area = st.text_input(
+                "Service Area *",
+                placeholder="e.g. Domiciliary care — adults with learning disabilities",
+            )
+            geographic_area = st.text_input(
+                "Geographic Area *",
+                placeholder="e.g. Birmingham and West Midlands",
+            )
+            time_period = st.text_input(
+                "Time Period to Review *",
+                placeholder="e.g. Last 3 years (2022–2025)",
+            )
+
+        # ---- Optional inputs ------------------------------------------
+        st.markdown("#### Optional Inputs")
+        c3, c4 = st.columns(2)
+
+        with c3:
+            known_competitors_raw = st.text_area(
+                "Known Competitors (one per line)",
+                placeholder="Mencap\nScopeUK\nRehabcare Ltd",
+                height=110,
+            )
+
+        with c4:
+            manual_urls_raw = st.text_area(
+                "Manual URLs to check (one per line)",
+                placeholder="https://www.birmingham.gov.uk/procurement\nhttps://...",
+                height=110,
+            )
+
+        # ---- Provider & depth -----------------------------------------
+        st.markdown("#### Research Settings")
+        c5, c6, c7 = st.columns([1, 1, 1])
+
+        with c5:
+            research_depth = st.radio(
+                "Research Depth",
+                options=["Quick Scan", "Deeper Scan"],
+                help=(
+                    "**Quick Scan** — typically 2–5 minutes. "
+                    "Up to 5 competitors, 12 sources, 3 procurement notices.\n\n"
+                    "**Deeper Scan** — typically 8–20 minutes. "
+                    "Up to 10 competitors, 30 sources, 8 procurement notices."
+                ),
+            )
+
+        with c6:
+            provider_name = st.selectbox(
+                "Model Provider",
+                options=list(PROVIDERS.keys()),
+                help="All providers use built-in web search / grounding.",
+            )
+            provider_cfg = PROVIDERS[provider_name]
+            st.caption(provider_cfg["note"])
+
+        with c7:
+            model_name = st.selectbox("Model", options=provider_cfg["models"])
+
+        # ---- API key --------------------------------------------------
+        env_var = provider_cfg["env_var"]
+        env_value = os.environ.get(env_var, "")
+
+        if env_value:
+            st.success(f"API key detected in environment variable `{env_var}`.")
+            api_key_input = st.text_input(
+                f"Override API key (leave blank to use `{env_var}`)",
+                type="password",
+                value="",
+            )
+        else:
+            api_key_input = st.text_input(
+                f"API Key (`{env_var}`) *",
+                type="password",
+                placeholder=f"Paste your API key, or set {env_var} in your environment",
+            )
+
+        # ---- Submit ---------------------------------------------------
+        submitted = st.form_submit_button(
+            "🚀 Run Research",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        resolved_key = api_key_input.strip() or env_value
+        errors = _validate_form(
+            target_company=target_company,
+            target_website=target_website,
+            commissioner=commissioner,
+            service_area=service_area,
+            geographic_area=geographic_area,
+            time_period=time_period,
+            api_key=resolved_key,
+            env_var=env_var,
+        )
+
+        if errors:
+            for e in errors:
+                st.error(e)
+        else:
+            _run_research(
+                commissioner=commissioner,
+                service_area=service_area,
+                target_company=target_company,
+                target_website=target_website,
+                geographic_area=geographic_area,
+                time_period=time_period,
+                known_competitors=[
+                    line.strip()
+                    for line in known_competitors_raw.splitlines()
+                    if line.strip()
+                ],
+                manual_urls=[
+                    line.strip()
+                    for line in manual_urls_raw.splitlines()
+                    if line.strip()
+                ],
+                research_depth="quick" if research_depth == "Quick Scan" else "deep",
+                provider_name=provider_name,
+                model_name=model_name,
+                api_key=resolved_key,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Research execution
+# ---------------------------------------------------------------------------
+
+def _run_research(
+    commissioner, service_area, target_company, target_website,
+    geographic_area, time_period, known_competitors, manual_urls,
+    research_depth, provider_name, model_name, api_key,
+):
+    run_id = str(uuid.uuid4())
+
+    config = ResearchConfig(
+        commissioner=commissioner,
+        service_area=service_area,
+        target_company=target_company,
+        target_website=target_website,
+        geographic_area=geographic_area,
+        time_period=time_period,
+        known_competitors=known_competitors,
+        manual_urls=manual_urls,
+        research_depth=research_depth,
+        run_id=run_id,
+    )
+
+    provider = LLMWebProvider(
+        provider_name=provider_name,
+        model_name=model_name,
+        api_key=api_key,
+    )
+
+    with st.status("Running research…", expanded=True) as status:
+        try:
+            st.write("🔍 **Phase 1:** Market intelligence — procurement, competitors, commissioner priorities…")
+            research_agent = ResearchAgent(config, provider)
+            phase1 = research_agent.run(status_callback=st.write)
+
+            st.write("🌐 **Phase 2:** Website analysis — target company and competitors…")
+            analysis_agent = AnalysisAgent(config, provider)
+            phase2 = analysis_agent.run(
+                research_results=phase1,
+                status_callback=st.write,
+            )
+
+            st.write("💾 Saving outputs…")
+            results = _merge_results(phase1, phase2)
+            output_dir = _save_outputs(results, config)
+
+            status.update(
+                label=f"✅ Research complete — saved to `{output_dir}`",
+                state="complete",
+            )
+
+            st.session_state.results = results
+            st.rerun()
+
+        except Exception as exc:
+            status.update(label=f"❌ Research failed: {exc}", state="error")
+            st.error(f"An error occurred: {exc}")
+            st.exception(exc)
+
+
+# ---------------------------------------------------------------------------
+# Results display
+# ---------------------------------------------------------------------------
+
+def _show_results():
+    results = st.session_state.results
+    meta = results.get("metadata", {})
+
+    info_col, btn_col = st.columns([4, 1])
+    with info_col:
+        st.info(
+            f"Showing results for **{meta.get('target_company', '')}** | "
+            f"Commissioner: **{meta.get('commissioner', '')}** | "
+            f"Run `{meta.get('run_id', '')[:8]}` | "
+            f"Confidence: **{results.get('confidence_rating', 'Low')}**"
+        )
+    with btn_col:
+        if st.button("🔄 New Research Run", type="primary", use_container_width=True):
+            del st.session_state.results
+            st.rerun()
+
+    renderer = DashboardRenderer(results)
+    renderer.render()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _validate_form(**kwargs) -> list:
+    errors = []
+    required = {
+        "target_company": "Target company name",
+        "target_website": "Target company website",
+        "commissioner": "Commissioner / local authority",
+        "service_area": "Service area",
+        "geographic_area": "Geographic area",
+        "time_period": "Time period",
+    }
+    for field, label in required.items():
+        if not kwargs.get(field, "").strip():
+            errors.append(f"{label} is required.")
+
+    if not kwargs.get("api_key", "").strip():
+        env_var = kwargs.get("env_var", "API_KEY")
+        errors.append(
+            f"API key is required — paste it above or set the `{env_var}` environment variable."
+        )
+    return errors
+
+
+def _merge_results(phase1: dict, phase2: dict) -> dict:
+    merged = {**phase1}
+    merged["website_analyses"] = phase2.get("website_analyses", {})
+    merged["benchmarking"] = phase2.get("benchmarking", {})
+    merged["benchmarking_criteria"] = phase2.get("benchmarking_criteria", [])
+    merged["bid_positioning"] = phase2.get("bid_positioning", [])
+    merged["executive_summary"] = phase2.get("executive_summary", "")
+    merged["evidence_gaps"] = phase2.get("evidence_gaps", phase1.get("evidence_gaps", []))
+    merged["sources"] = phase2.get("sources", phase1.get("sources", []))
+    merged["confidence_rating"] = phase2.get("confidence_rating", phase1.get("confidence_rating", "Low"))
+    merged["confidence_rationale"] = phase2.get("confidence_rationale", phase1.get("confidence_rationale", ""))
+    return merged
+
+
+def _save_outputs(results: dict, config: ResearchConfig) -> str:
+    output_dir = Path("outputs") / config.run_id[:8]
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # JSON
+    with open(output_dir / "results.json", "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, default=str)
+
+    renderer = DashboardRenderer(results)
+
+    # Markdown
+    with open(output_dir / "report.md", "w", encoding="utf-8") as f:
+        f.write(renderer.to_markdown())
+
+    # HTML
+    with open(output_dir / "report.html", "w", encoding="utf-8") as f:
+        f.write(renderer.to_html())
+
+    # CSV
+    with open(output_dir / "sources.csv", "w", encoding="utf-8", newline="") as f:
+        f.write(renderer.to_source_csv())
+
+    return str(output_dir)
+
+
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,202 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Social Care Competitor Intelligence Result",
+  "description": "Full output schema for one research run",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "run_id": { "type": "string", "description": "UUID for this run" },
+        "timestamp": { "type": "string", "description": "ISO 8601 datetime" },
+        "commissioner": { "type": "string" },
+        "service_area": { "type": "string" },
+        "target_company": { "type": "string" },
+        "target_website": { "type": "string" },
+        "geographic_area": { "type": "string" },
+        "time_period": { "type": "string" },
+        "research_depth": { "type": "string", "enum": ["quick", "deep"] },
+        "model_provider": { "type": "string" }
+      }
+    },
+    "executive_summary": {
+      "type": "string",
+      "description": "3–5 sentence narrative summary of competitive landscape and recommendations"
+    },
+    "procurement": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["contract", "framework", "dps", "direct_award", "extension", "market_engagement", "pin"]
+          },
+          "commissioner": { "type": "string" },
+          "value": { "type": "string", "description": "e.g. '£1.2m per annum' or 'Not published'" },
+          "award_date": { "type": "string" },
+          "start_date": { "type": "string" },
+          "end_date": { "type": "string" },
+          "awarded_to": { "type": "string" },
+          "source_url": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "competitors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "website": { "type": "string" },
+          "headquarters": { "type": "string" },
+          "size_description": { "type": "string", "description": "e.g. 'Large national provider', 'SME regional'" },
+          "cqc_rating": {
+            "type": "string",
+            "enum": ["Outstanding", "Good", "Requires Improvement", "Inadequate", "Not registered", "Unknown"]
+          },
+          "cqc_profile_url": { "type": "string" },
+          "companies_house_number": { "type": "string" },
+          "services": { "type": "array", "items": { "type": "string" } },
+          "geographic_coverage": { "type": "array", "items": { "type": "string" } },
+          "known_contracts_with_commissioner": { "type": "array", "items": { "type": "string" } },
+          "source_urls": { "type": "array", "items": { "type": "string" } },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "website_analyses": {
+      "type": "object",
+      "description": "Keys are company names (target + competitors)",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "company_name": { "type": "string" },
+          "website_url": { "type": "string" },
+          "accessible": { "type": "boolean" },
+          "positioning": {
+            "type": "object",
+            "properties": {
+              "headline_proposition": { "type": "string" },
+              "target_commissioner_message": { "type": "string" },
+              "differentiators": { "type": "array", "items": { "type": "string" } },
+              "category": { "type": "string" }
+            }
+          },
+          "evidence_quality": {
+            "type": "object",
+            "properties": {
+              "cqc_rating_cited": { "type": "string" },
+              "outcomes_data_present": { "type": "boolean" },
+              "overall_evidence_quality": {
+                "type": "string",
+                "enum": ["Strong", "Moderate", "Weak", "Very weak"]
+              }
+            }
+          },
+          "claims_by_type": {
+            "type": "object",
+            "properties": {
+              "explicit": { "type": "array", "items": { "type": "string" } },
+              "evidenced": { "type": "array", "items": { "type": "string" } },
+              "unsupported": { "type": "array", "items": { "type": "string" } },
+              "analyst_inference": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "strengths": { "type": "array", "items": { "type": "string" } },
+          "weaknesses_and_gaps": { "type": "array", "items": { "type": "string" } },
+          "bid_positioning_implications": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "implication": { "type": "string" },
+                "action": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "benchmarking": {
+      "type": "object",
+      "description": "Keys are company names",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Keys are criterion names",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "score": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "justification": { "type": "string" },
+            "source": { "type": "string" },
+            "analyst_inference": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "benchmarking_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Ordered list of criterion keys"
+    },
+    "commissioner_priorities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "priority": { "type": "string" },
+          "detail": { "type": "string" },
+          "source_url": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "bid_positioning": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "point": { "type": "string" },
+          "detail": { "type": "string" },
+          "evidence": { "type": "string" },
+          "priority": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "evidence_gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "area": { "type": "string" },
+          "detail": { "type": "string" },
+          "suggested_action": { "type": "string" }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string" },
+          "title": { "type": "string" },
+          "used_for": { "type": "string" }
+        }
+      }
+    },
+    "confidence_rating": {
+      "type": "string",
+      "enum": ["High", "Medium", "Low"],
+      "description": "Overall confidence in the research findings"
+    },
+    "confidence_rationale": {
+      "type": "string",
+      "description": "Brief explanation of what drove the confidence rating"
+    }
+  }
+}
