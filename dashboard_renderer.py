@@ -435,7 +435,7 @@ class DashboardRenderer:
                 except (ValueError, TypeError):
                     return ""
 
-            styled = df.style.applymap(colour_score)
+            styled = df.style.map(colour_score) if hasattr(df.style, "map") else df.style.applymap(colour_score)
             st.dataframe(styled, use_container_width=True)
 
         st.divider()
