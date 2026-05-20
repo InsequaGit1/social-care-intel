@@ -24,12 +24,12 @@ class ResearchConfig:
     commissioner: str
     service_area: str
     target_company: str
-    target_website: str
-    geographic_area: str
     time_period: str
-    known_competitors: List[str]
-    manual_urls: List[str]
     research_depth: str          # "quick" or "deep"
+    target_website: str = ""
+    geographic_area: str = ""
+    known_competitors: List[str] = field(default_factory=list)
+    manual_urls: List[str] = field(default_factory=list)
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # ---- Depth-dependent limits ----------------------------------------
