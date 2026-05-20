@@ -156,8 +156,11 @@ def _show_input_form():
                 options=["Quick Scan", "Deeper Scan"],
                 help=(
                     "**Quick Scan** — typically 2–5 minutes. "
-                    "Up to 5 competitors, 12 sources, 3 procurement notices.\n\n"
-                    "**Deeper Scan** — typically 8–20 minutes. "
+                    "Single broad research call. Up to 5 competitors, 12 sources, 3 procurement notices. "
+                    "Some fields may come back 'Unknown'.\n\n"
+                    "**Deeper Scan** — typically 10–25 minutes. "
+                    "Broad research PLUS a targeted enrichment search per competitor "
+                    "(website, CQC rating, Companies House, contract history). "
                     "Up to 10 competitors, 30 sources, 8 procurement notices."
                 ),
             )

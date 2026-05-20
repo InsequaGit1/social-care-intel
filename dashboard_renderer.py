@@ -247,15 +247,39 @@ class DashboardRenderer:
 
         for c in competitors:
             with st.expander(f"🏢 {c.get('name', 'Unknown')}", expanded=False):
+                rationale = c.get("selection_rationale", "")
+                if rationale:
+                    st.markdown(f"**Why included:** _{rationale}_")
+                else:
+                    st.caption("⚠️ No selection rationale provided by the model.")
+
+                enrichment = c.get("enrichment_status", {})
+                if enrichment:
+                    flags = []
+                    flags.append("✅ Website" if enrichment.get("website_found") else "❌ Website")
+                    flags.append("✅ CQC" if enrichment.get("cqc_found") else "❌ CQC")
+                    flags.append("✅ Companies House" if enrichment.get("companies_house_found") else "❌ Companies House")
+                    flags.append("✅ Contracts" if enrichment.get("contracts_found") else "❌ Contracts")
+                    st.caption("Enrichment: " + " · ".join(flags))
+
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown(f"**Website:** {c.get('website', 'Unknown')}")
+                    website = c.get("website", "Unknown")
+                    if website and website.startswith("http"):
+                        st.markdown(f"**Website:** [{website}]({website})")
+                    else:
+                        st.markdown(f"**Website:** {website}")
                     st.markdown(f"**Headquarters:** {c.get('headquarters', 'Unknown')}")
                     st.markdown(f"**Size:** {c.get('size_description', 'Unknown')}")
                     st.markdown(f"**CQC Rating:** {c.get('cqc_rating', 'Unknown')}")
                     if c.get("cqc_profile_url"):
                         st.markdown(f"**CQC Profile:** [{c['cqc_profile_url']}]({c['cqc_profile_url']})")
-                    st.markdown(f"**Companies House:** {c.get('companies_house_number', 'Unknown')}")
+                    ch_num = c.get("companies_house_number", "Unknown")
+                    ch_url = c.get("companies_house_url", "")
+                    if ch_url and ch_url.startswith("http"):
+                        st.markdown(f"**Companies House:** [{ch_num}]({ch_url})")
+                    else:
+                        st.markdown(f"**Companies House:** {ch_num}")
 
                 with col2:
                     services = c.get("services", [])
@@ -274,7 +298,21 @@ class DashboardRenderer:
                 if local_contracts:
                     st.markdown("**Known local contracts:**")
                     for lc in local_contracts:
-                        st.markdown(f"  - {lc}")
+                        if isinstance(lc, dict):
+                            title = lc.get("title", "Untitled")
+                            date = lc.get("date", "")
+                            value = lc.get("value", "")
+                            url = lc.get("source_url", "")
+                            line = f"  - **{title}**"
+                            if date:
+                                line += f" ({date})"
+                            if value:
+                                line += f" — {value}"
+                            if url and url.startswith("http"):
+                                line += f" [↗]({url})"
+                            st.markdown(line)
+                        else:
+                            st.markdown(f"  - {lc}")
                 else:
                     st.markdown("**Known local contracts:** No reliable public source found")
 

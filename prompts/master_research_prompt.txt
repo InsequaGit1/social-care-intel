@@ -37,15 +37,26 @@ Search for and extract information across ALL of the following areas:
    - Dynamic Purchasing Systems (DPS) relevant to this area
    - Direct awards, contract extensions, and novations
    - Prior Information Notices and market engagement events
-   - Search: "[commissioner] [service_area] contract award", "[commissioner] framework agreement social care", site:contractsfinder.service.gov.uk "[commissioner]"
+   - REQUIRED SEARCHES — run all of these:
+     * site:contractsfinder.service.gov.uk "{commissioner}" "{service_area}"
+     * site:find-tender.service.gov.uk "{commissioner}"
+     * "{commissioner}" "{service_area}" contract award
+     * "{commissioner}" framework "{service_area}"
 
 2. COMPETITORS ACTIVE IN THIS MARKET
    - Who currently holds contracts with this commissioner?
    - Who is on relevant frameworks?
    - Who has responded to market engagement events?
    - Who operates in this geographic area?
-   - Search: "[service_area] provider [geographic_area]", "[commissioner] [service_area] provider", "[commissioner] approved provider list"
+   - REQUIRED SEARCHES:
+     * "{service_area}" providers "{geographic_area}"
+     * "{commissioner}" approved provider list "{service_area}"
+     * "{commissioner}" "{service_area}" provider directory
    - Include any known competitors provided: {known_competitors}
+   - For EACH competitor you identify, you MUST also provide a selection_rationale
+     explaining WHY this provider is included (e.g. "Currently holds contract X with this commissioner",
+     "Listed on framework Y", "Top regional provider in geographic area"). Do NOT include
+     a competitor without a clear, evidenced reason.
 
 3. COMMISSIONER PRIORITIES AND STRATEGY
    - Current commissioning strategy for this service area
@@ -98,6 +109,7 @@ Return ONLY a valid JSON object matching this schema exactly. No preamble, no ma
   "competitors": [
     {
       "name": "string",
+      "selection_rationale": "string — REQUIRED. Why this competitor was selected. Must reference specific evidence (e.g. 'Holds 2023 framework with this commissioner', 'Top 5 regional provider per CQC directory', 'Named in market engagement notice X')",
       "website": "string — URL or 'Unknown'",
       "headquarters": "string or 'Unknown'",
       "size_description": "string — e.g. 'Large national provider' or 'SME regional'",

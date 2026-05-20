@@ -68,11 +68,13 @@ _noop: StatusCallback = lambda msg: None
 class ResearchAgent:
 
     PROMPT_PATH = Path(__file__).parent / "prompts" / "master_research_prompt.txt"
+    ENRICH_PATH = Path(__file__).parent / "prompts" / "competitor_enrichment_prompt.txt"
 
     def __init__(self, config: ResearchConfig, provider: SearchProvider):
         self.config = config
         self.provider = provider
         self._prompt_template = self.PROMPT_PATH.read_text(encoding="utf-8")
+        self._enrich_template = self.ENRICH_PATH.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -116,6 +118,22 @@ class ResearchAgent:
         competitors = raw_data.get("competitors", [])[: cfg.max_competitors]
         sources = combined_sources[: cfg.max_sources]
 
+        # Deep Scan only — enrich each competitor with focused targeted searches
+        if not cfg.is_quick and competitors:
+            status_callback(f"  🔎 Deep enrichment: running targeted searches on {len(competitors)} competitors…")
+            enriched = []
+            for i, comp in enumerate(competitors, 1):
+                name = comp.get("name", "Unknown")
+                status_callback(f"    [{i}/{len(competitors)}] Enriching **{name}** — website, CQC, Companies House, contracts…")
+                enriched_comp = self._enrich_competitor(comp)
+                enriched.append(enriched_comp)
+                # Roll up any new sources
+                for url in enriched_comp.get("source_urls", []):
+                    if url and not any(s.get("url") == url for s in sources):
+                        sources.append({"url": url, "title": f"{name} enrichment", "used_for": "Competitor enrichment"})
+            competitors = enriched
+            sources = sources[: cfg.max_sources]
+
         output = {
             "metadata": {
                 "run_id": cfg.run_id,
@@ -139,6 +157,47 @@ class ResearchAgent:
         }
 
         return output
+
+    # ------------------------------------------------------------------
+    # Per-competitor enrichment (Deep Scan only)
+    # ------------------------------------------------------------------
+
+    def _enrich_competitor(self, competitor: Dict[str, Any]) -> Dict[str, Any]:
+        cfg = self.config
+        name = competitor.get("name", "")
+
+        current_profile = json.dumps({
+            k: competitor.get(k) for k in (
+                "website", "cqc_rating", "companies_house_number",
+                "services", "geographic_coverage", "selection_rationale",
+            )
+        }, indent=2)
+
+        prompt = _fill_template(self._enrich_template,
+            company_name=name,
+            current_profile=current_profile,
+            commissioner=cfg.commissioner,
+            service_area=cfg.service_area,
+            geographic_area=cfg.geographic_area or "Unknown",
+        )
+
+        result = self.provider.research(prompt, max_tokens=3500)
+        if not result.ok:
+            return competitor  # Keep original if enrichment fails
+
+        enriched_data = _extract_json(result.content)
+        if not enriched_data:
+            return competitor
+
+        # Merge — prefer enriched data where it's non-empty, but preserve rationale
+        merged = dict(competitor)
+        for key, value in enriched_data.items():
+            if value and value not in ("Unknown", "", []):
+                merged[key] = value
+        # Always preserve original selection_rationale
+        if competitor.get("selection_rationale"):
+            merged["selection_rationale"] = competitor["selection_rationale"]
+        return merged
 
     # ------------------------------------------------------------------
     # Prompt construction
