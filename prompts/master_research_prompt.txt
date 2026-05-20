@@ -14,11 +14,18 @@ USE YOUR WEB SEARCH CAPABILITY to find current, accurate information. Search UK-
 Commissioner / Local Authority / ICB: {commissioner}
 Service Area: {service_area}
 Target Company: {target_company}
+Target Company Website: {target_website}
 Geographic Area: {geographic_area}
 Time Period: {time_period}
 Known Competitors: {known_competitors}
 Manual URLs to check: {manual_urls}
 Research Depth: {research_depth}
+
+=== IMPORTANT: INFER MISSING DETAILS ===
+Some fields above may say "Not provided". If so:
+- Target Company Website: search for "{target_company}" to find their official website
+- Geographic Area: infer from the commissioner's known area and any contracts found
+- Competitors: find them through your research — do not wait to be told who they are
 
 === RESEARCH TASKS ===
 

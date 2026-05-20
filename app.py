@@ -96,32 +96,24 @@ def _show_input_form():
 
     with st.form("research_form", border=True):
 
-        # ---- Target & Context ------------------------------------------
-        st.markdown("#### Target & Context")
+        # ---- Required fields ------------------------------------------
+        st.markdown("#### Required")
         c1, c2 = st.columns(2)
 
         with c1:
-            target_company = st.text_input(
-                "Target Company Name *",
-                placeholder="e.g. Acorn Care Services Ltd",
-            )
-            target_website = st.text_input(
-                "Target Company Website *",
-                placeholder="e.g. https://www.acorncare.co.uk",
-            )
             commissioner = st.text_input(
                 "Commissioner / Local Authority / ICB *",
                 placeholder="e.g. Birmingham City Council",
             )
-
-        with c2:
             service_area = st.text_input(
                 "Service Area *",
                 placeholder="e.g. Domiciliary care — adults with learning disabilities",
             )
-            geographic_area = st.text_input(
-                "Geographic Area *",
-                placeholder="e.g. Birmingham and West Midlands",
+
+        with c2:
+            target_company = st.text_input(
+                "Target Company Name *",
+                placeholder="e.g. Acorn Care Services Ltd",
             )
             time_period = st.text_input(
                 "Time Period to Review *",
@@ -129,21 +121,29 @@ def _show_input_form():
             )
 
         # ---- Optional inputs ------------------------------------------
-        st.markdown("#### Optional Inputs")
+        st.markdown("#### Optional — leave blank and the model will find these")
         c3, c4 = st.columns(2)
 
         with c3:
-            known_competitors_raw = st.text_area(
-                "Known Competitors (one per line)",
-                placeholder="Mencap\nScopeUK\nRehabcare Ltd",
-                height=110,
+            target_website = st.text_input(
+                "Target Company Website",
+                placeholder="e.g. https://www.acorncare.co.uk — found automatically if blank",
+            )
+            geographic_area = st.text_input(
+                "Geographic Area",
+                placeholder="e.g. Birmingham and West Midlands — inferred if blank",
             )
 
         with c4:
+            known_competitors_raw = st.text_area(
+                "Known Competitors (one per line)",
+                placeholder="Mencap\nScopeUK\nRehabcare Ltd",
+                height=80,
+            )
             manual_urls_raw = st.text_area(
                 "Manual URLs to check (one per line)",
-                placeholder="https://www.birmingham.gov.uk/procurement\nhttps://...",
-                height=110,
+                placeholder="https://www.birmingham.gov.uk/procurement",
+                height=80,
             )
 
         # ---- Provider & depth -----------------------------------------
@@ -203,10 +203,8 @@ def _show_input_form():
         resolved_key = api_key_input.strip() or env_value
         errors = _validate_form(
             target_company=target_company,
-            target_website=target_website,
             commissioner=commissioner,
             service_area=service_area,
-            geographic_area=geographic_area,
             time_period=time_period,
             api_key=resolved_key,
             env_var=env_var,
@@ -334,10 +332,8 @@ def _validate_form(**kwargs) -> list:
     errors = []
     required = {
         "target_company": "Target company name",
-        "target_website": "Target company website",
         "commissioner": "Commissioner / local authority",
         "service_area": "Service area",
-        "geographic_area": "Geographic area",
         "time_period": "Time period",
     }
     for field, label in required.items():
