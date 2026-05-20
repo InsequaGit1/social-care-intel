@@ -25,12 +25,24 @@ class AnalysisAgent:
 
     WEB_PROMPT_PATH = Path(__file__).parent / "prompts" / "website_analysis_prompt.txt"
     BENCH_PROMPT_PATH = Path(__file__).parent / "prompts" / "benchmarking_prompt.txt"
+    BENCH_SINGLE_PATH = Path(__file__).parent / "prompts" / "benchmarking_single_prompt.txt"
+    SYNTH_PATH = Path(__file__).parent / "prompts" / "synthesis_prompt.txt"
+
+    CRITERIA = [
+        "service_match", "local_presence", "commissioner_relationship",
+        "contract_history", "quality_compliance", "cqc_position",
+        "workforce_capacity", "mobilisation_capability", "digital_innovation",
+        "specialist_capability", "social_value", "partnership_working",
+        "website_credibility", "overall_competitor_strength",
+    ]
 
     def __init__(self, config: ResearchConfig, provider: SearchProvider):
         self.config = config
         self.provider = provider
         self._web_template = self.WEB_PROMPT_PATH.read_text(encoding="utf-8")
         self._bench_template = self.BENCH_PROMPT_PATH.read_text(encoding="utf-8")
+        self._bench_single_template = self.BENCH_SINGLE_PATH.read_text(encoding="utf-8")
+        self._synth_template = self.SYNTH_PATH.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -69,12 +81,16 @@ class AnalysisAgent:
             analysis = self._analyse_website(company_name=name, website_url=url)
             website_analyses[name] = analysis
 
-        # ---- Benchmarking --------------------------------------------
-        status_callback("  Scoring and benchmarking all companies…")
+        # ---- Benchmarking (per-company) ------------------------------
+        all_companies = [{"name": cfg.target_company, "is_target": True}] + [
+            {**c, "is_target": False} for c in companies_to_analyse
+        ]
+        status_callback(f"  📊 Scoring {len(all_companies)} companies across 14 criteria (one call per company)…")
         bench_data = self._benchmark(
-            companies_to_analyse=companies_to_analyse,
+            all_companies=all_companies,
             research_results=research_results,
             website_analyses=website_analyses,
+            status_callback=status_callback,
         )
 
         # ---- New sources from web analysis ---------------------------
@@ -141,35 +157,139 @@ class AnalysisAgent:
 
     def _benchmark(
         self,
-        companies_to_analyse: List[Dict],
+        all_companies: List[Dict],
         research_results: Dict[str, Any],
         website_analyses: Dict[str, Any],
+        status_callback: StatusCallback = _noop,
     ) -> Dict[str, Any]:
+        """
+        Score companies one at a time, then run a synthesis call for
+        the executive summary, bid positioning, and evidence gaps.
+        """
         cfg = self.config
-
-        companies_list = _build_companies_list_text(
-            target_name=cfg.target_company,
-            competitors=companies_to_analyse,
-        )
-
         research_summary = _build_research_summary(
             research_results=research_results,
             website_analyses=website_analyses,
         )
 
-        prompt = _fill_template(self._bench_template,
+        # ---- Per-company scoring -------------------------------------
+        scores: Dict[str, Any] = {}
+        for i, comp in enumerate(all_companies, 1):
+            name = comp.get("name", "Unknown")
+            is_target = comp.get("is_target", False)
+            label = f"{name}{' (TARGET)' if is_target else ''}"
+            status_callback(f"    [{i}/{len(all_companies)}] Scoring **{label}**…")
+
+            company_scores = self._score_single_company(
+                company=comp,
+                website_analysis=website_analyses.get(name, {}),
+                research_summary=research_summary,
+            )
+            if company_scores:
+                scores[name] = company_scores
+            else:
+                # Fallback: empty scores so dashboard can still render
+                scores[name] = {
+                    c: {"score": 0, "justification": "Scoring call failed", "source": "", "analyst_inference": False}
+                    for c in self.CRITERIA
+                }
+
+        # ---- Synthesis pass ------------------------------------------
+        status_callback("    Synthesising executive summary and bid positioning…")
+        synthesis = self._synthesise(
+            scores=scores,
+            research_summary=research_summary,
+        )
+
+        return {
+            "scores": scores,
+            "criteria": self.CRITERIA,
+            "executive_summary": synthesis.get("executive_summary", ""),
+            "bid_positioning_summary": synthesis.get("bid_positioning", []),
+            "evidence_gaps": synthesis.get("evidence_gaps", []),
+        }
+
+    def _score_single_company(
+        self,
+        company: Dict,
+        website_analysis: Dict,
+        research_summary: str,
+    ) -> Optional[Dict[str, Any]]:
+        cfg = self.config
+        name = company.get("name", "Unknown")
+
+        # Build a focused company profile from research + website analysis
+        profile_parts = [
+            f"Name: {name}",
+            f"Website: {company.get('website', 'Unknown')}",
+            f"CQC rating: {company.get('cqc_rating', 'Unknown')}",
+            f"CQC profile: {company.get('cqc_profile_url', '')}",
+            f"Companies House: {company.get('companies_house_number', 'Unknown')}",
+            f"Size: {company.get('size_description', 'Unknown')}",
+            f"Services: {', '.join(company.get('services', []) or [])}",
+            f"Geographic coverage: {', '.join(company.get('geographic_coverage', []) or [])}",
+            f"Known contracts with commissioner: {company.get('known_contracts_with_commissioner', [])}",
+            f"Selection rationale: {company.get('selection_rationale', 'N/A')}",
+        ]
+        if website_analysis and website_analysis.get("accessible", True):
+            ev = website_analysis.get("evidence_quality", {})
+            profile_parts.append(f"Evidence quality from website: {ev.get('overall_evidence_quality', 'Unknown')}")
+            profile_parts.append(f"Strengths: {'; '.join(website_analysis.get('strengths', [])[:5])}")
+            profile_parts.append(f"Gaps: {'; '.join(website_analysis.get('weaknesses_and_gaps', [])[:5])}")
+
+        company_profile = "\n".join(profile_parts)
+
+        prompt = _fill_template(self._bench_single_template,
             target_company=cfg.target_company,
             commissioner=cfg.commissioner,
             service_area=cfg.service_area,
             geographic_area=cfg.geographic_area or "Not specified",
-            companies_list=companies_list,
-            research_summary=research_summary,
+            company_name=name,
+            company_profile=company_profile,
+            research_summary=research_summary[:4000],  # Cap context size
         )
 
-        result = self.provider.research(prompt, max_tokens=7000)
-
+        result = self.provider.research(prompt, max_tokens=3500)
         if not result.ok:
-            return {"scores": {}, "criteria": [], "bid_positioning_summary": [], "evidence_gaps": []}
+            return None
+
+        data = _extract_json(result.content)
+        if not data:
+            return None
+        return data.get("scores", {})
+
+    def _synthesise(self, scores: Dict[str, Any], research_summary: str) -> Dict[str, Any]:
+        cfg = self.config
+
+        # Build a compact summary of scores
+        scored_lines = []
+        for company, criteria_scores in scores.items():
+            overall = criteria_scores.get("overall_competitor_strength", {})
+            overall_score = overall.get("score", 0) if isinstance(overall, dict) else 0
+            top_3 = sorted(
+                ((k, v) for k, v in criteria_scores.items()
+                 if isinstance(v, dict) and k != "overall_competitor_strength"),
+                key=lambda x: x[1].get("score", 0),
+                reverse=True,
+            )[:3]
+            top_strengths = "; ".join(f"{k}={v.get('score', 0)}" for k, v in top_3)
+            scored_lines.append(
+                f"  - {company}: overall={overall_score}/5 | top strengths: {top_strengths}"
+            )
+        scored_summary = "\n".join(scored_lines)
+
+        prompt = _fill_template(self._synth_template,
+            target_company=cfg.target_company,
+            commissioner=cfg.commissioner,
+            service_area=cfg.service_area,
+            geographic_area=cfg.geographic_area or "Not specified",
+            scored_summary=scored_summary,
+            research_summary=research_summary[:3000],
+        )
+
+        result = self.provider.research(prompt, max_tokens=3500)
+        if not result.ok:
+            return {}
 
         data = _extract_json(result.content)
         return data if data else {}

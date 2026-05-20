@@ -1,0 +1,66 @@
+You are an expert UK social care bid strategist. Score ONE company against the standard benchmarking criteria for this opportunity.
+
+=== OPPORTUNITY CONTEXT ===
+Target Company: {target_company}
+Commissioner: {commissioner}
+Service Area: {service_area}
+Geographic Area: {geographic_area}
+
+=== COMPANY TO SCORE ===
+{company_profile}
+
+=== RELEVANT RESEARCH CONTEXT ===
+{research_summary}
+
+=== SCORING SCALE ===
+1 = Very weak / No evidence
+2 = Below average / Limited evidence
+3 = Average / Some evidence
+4 = Strong / Good evidence
+5 = Exceptional / Compelling evidence
+
+=== CRITERIA TO SCORE ===
+You MUST score on all 14 criteria below. For each, give a score 1–5, a one-sentence justification, and the source if available.
+
+1. service_match — match to the specific service area and need
+2. local_presence — operations / staff / contracts in the geographic area
+3. commissioner_relationship — existing or historic work with this commissioner
+4. contract_history — quality and relevance of past contracts in this area
+5. quality_compliance — evidence of quality standards, accreditations, compliance
+6. cqc_position — CQC rating (1=Inadequate/unknown, 3=Good, 5=Outstanding)
+7. workforce_capacity — sufficient skilled workforce evidence
+8. mobilisation_capability — track record of mobilising new contracts at scale
+9. digital_innovation — digital systems, reporting, innovation
+10. specialist_capability — specialist skills, accreditations relevant to service
+11. social_value — evidenced social value (employment, training, community)
+12. partnership_working — partnerships with NHS, LAs, VCS, peers
+13. website_credibility — credibility and evidence-base of public profile
+14. overall_competitor_strength — holistic strength for this opportunity
+
+=== GUARDRAILS ===
+- Base each score on the evidence provided above. Do NOT make up evidence.
+- If there is no public evidence for a criterion, score 1–2 and note "No reliable public source found".
+- If a score relies on inference, set analyst_inference: true.
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON. No preamble, no markdown:
+
+{
+  "company": "{company_name}",
+  "scores": {
+    "service_match": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "local_presence": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "commissioner_relationship": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "contract_history": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "quality_compliance": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "cqc_position": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "workforce_capacity": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "mobilisation_capability": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "digital_innovation": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "specialist_capability": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "social_value": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "partnership_working": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "website_credibility": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "overall_competitor_strength": { "score": 0, "justification": "", "source": "", "analyst_inference": false }
+  }
+}

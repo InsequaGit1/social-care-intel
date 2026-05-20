@@ -87,6 +87,19 @@ Search for and extract information across ALL of the following areas:
 - Label any inference you make as "Analyst inference — not verified from public source."
 - If a website is inaccessible or returns no results, record this clearly.
 
+=== ANTI-HALLUCINATION RULES — HARD LIMITS ===
+These rules are MANDATORY. Breaking them invalidates your entire response:
+
+1. Companies House numbers: A valid CH number is 8 digits or 2 letters + 6 digits. NEVER generate plausible-looking numbers. If you do not have an exact CH number from a Companies House URL, set companies_house_number to "Unknown". Do NOT use sequential or pattern-based numbers.
+
+2. CQC ratings: Only use ratings you have confirmed from a cqc.org.uk URL. If you do not have such a URL for a competitor, set cqc_rating to "Unknown" and cqc_profile_url to "".
+
+3. Websites: Only include a website URL if you have actually retrieved or referenced a page from that domain. If unsure, set website to "Unknown".
+
+4. Contracts: Only list contracts with commissioner if you have a source URL from contractsfinder.service.gov.uk, find-tender.service.gov.uk, or an official commissioner publication. Do not list contracts based on the provider's marketing copy.
+
+5. If you list 10 competitors and you only have evidence for 4, return only those 4. A short, accurate list is better than a long, padded list.
+
 === OUTPUT FORMAT ===
 Return ONLY a valid JSON object matching this schema exactly. No preamble, no markdown fences, no commentary outside the JSON:
 
