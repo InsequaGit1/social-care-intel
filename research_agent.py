@@ -81,7 +81,8 @@ class ResearchAgent:
     def run(self, status_callback: StatusCallback = _noop) -> Dict[str, Any]:
         cfg = self.config
 
-        status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{cfg.geographic_area}**…")
+        geo_label = cfg.geographic_area or "(area to be inferred from commissioner)"
+        status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
 
         prompt = self._build_prompt()
         result = self.provider.research(prompt, max_tokens=7000)
@@ -92,6 +93,11 @@ class ResearchAgent:
         else:
             status_callback("  Parsing research results…")
             raw_data = _extract_json(result.content)
+            if not raw_data and result.content:
+                preview = result.content[:200].replace("\n", " ")
+                status_callback(
+                    f"  ⚠️ Model did not return valid JSON. First 200 chars: _{preview}…_"
+                )
 
         status_callback(f"  Found {len(raw_data.get('procurement', []))} procurement notices, "
                         f"{len(raw_data.get('competitors', []))} competitors")

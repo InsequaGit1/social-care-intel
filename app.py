@@ -177,11 +177,16 @@ def _show_input_form():
         # ---- API key --------------------------------------------------
         env_var = provider_cfg["env_var"]
         env_value = os.environ.get(env_var, "")
+        if not env_value:
+            try:
+                env_value = st.secrets.get(env_var, "")
+            except Exception:
+                env_value = ""
 
         if env_value:
-            st.success(f"API key detected in environment variable `{env_var}`.")
+            st.success(f"API key detected (from `{env_var}` env var or Streamlit secrets).")
             api_key_input = st.text_input(
-                f"Override API key (leave blank to use `{env_var}`)",
+                f"Override API key (leave blank to use stored key)",
                 type="password",
                 value="",
             )
@@ -189,7 +194,7 @@ def _show_input_form():
             api_key_input = st.text_input(
                 f"API Key (`{env_var}`) *",
                 type="password",
-                placeholder=f"Paste your API key, or set {env_var} in your environment",
+                placeholder=f"Paste your API key, or set {env_var} in env / Streamlit secrets",
             )
 
         # ---- Submit ---------------------------------------------------
