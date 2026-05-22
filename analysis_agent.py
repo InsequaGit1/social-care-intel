@@ -21,6 +21,29 @@ StatusCallback = Callable[[str], None]
 _noop: StatusCallback = lambda msg: None
 
 
+def _safe_join(items, sep: str = ", ", limit=None) -> str:
+    """
+    Join a list of items to a string, tolerating dicts and other non-string
+    members. Dicts get reduced to their 'title' or 'name' field if possible.
+    """
+    if not items:
+        return ""
+    if limit is not None:
+        items = items[:limit]
+    parts = []
+    for item in items:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            label = item.get("title") or item.get("name") or item.get("point") or str(item)
+            parts.append(str(label))
+        elif item is None:
+            continue
+        else:
+            parts.append(str(item))
+    return sep.join(parts)
+
+
 class AnalysisAgent:
 
     WEB_PROMPT_PATH = Path(__file__).parent / "prompts" / "website_analysis_prompt.txt"
@@ -238,16 +261,16 @@ class AnalysisAgent:
             f"CQC profile: {company.get('cqc_profile_url', '')}",
             f"Companies House: {company.get('companies_house_number', 'Unknown')}",
             f"Size: {company.get('size_description', 'Unknown')}",
-            f"Services: {', '.join(company.get('services', []) or [])}",
-            f"Geographic coverage: {', '.join(company.get('geographic_coverage', []) or [])}",
+            f"Services: {_safe_join(company.get('services', []))}",
+            f"Geographic coverage: {_safe_join(company.get('geographic_coverage', []))}",
             f"Known contracts with commissioner: {company.get('known_contracts_with_commissioner', [])}",
             f"Selection rationale: {company.get('selection_rationale', 'N/A')}",
         ]
         if website_analysis and website_analysis.get("accessible", True):
             ev = website_analysis.get("evidence_quality", {})
             profile_parts.append(f"Evidence quality from website: {ev.get('overall_evidence_quality', 'Unknown')}")
-            profile_parts.append(f"Strengths: {'; '.join(website_analysis.get('strengths', [])[:5])}")
-            profile_parts.append(f"Gaps: {'; '.join(website_analysis.get('weaknesses_and_gaps', [])[:5])}")
+            profile_parts.append(f"Strengths: {_safe_join(website_analysis.get('strengths', []), sep='; ', limit=5)}")
+            profile_parts.append(f"Gaps: {_safe_join(website_analysis.get('weaknesses_and_gaps', []), sep='; ', limit=5)}")
 
         company_profile = "\n".join(profile_parts)
 
@@ -419,7 +442,7 @@ def _build_research_summary(
             parts.append(
                 f"  - {c.get('name')} | CQC: {c.get('cqc_rating', 'Unknown')} | "
                 f"Size: {c.get('size_description', 'Unknown')} | "
-                f"Local contracts: {', '.join(c.get('known_contracts_with_commissioner', ['None found']))}"
+                f"Local contracts: {_safe_join(c.get('known_contracts_with_commissioner', []) or ['None found'])}"
             )
 
     priorities = research_results.get("commissioner_priorities", [])
@@ -435,8 +458,8 @@ def _build_research_summary(
             parts.append(
                 f"  - {company}: CQC cited={eq.get('cqc_rating_cited', 'N/A')} | "
                 f"Evidence quality={eq.get('overall_evidence_quality', 'Unknown')} | "
-                f"Strengths={'; '.join(analysis.get('strengths', [])[:2])} | "
-                f"Gaps={'; '.join(analysis.get('weaknesses_and_gaps', [])[:2])}"
+                f"Strengths={_safe_join(analysis.get('strengths', []), sep='; ', limit=2)} | "
+                f"Gaps={_safe_join(analysis.get('weaknesses_and_gaps', []), sep='; ', limit=2)}"
             )
 
     return "\n".join(parts) if parts else "No research data available."
