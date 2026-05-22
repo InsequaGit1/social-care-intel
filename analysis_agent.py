@@ -99,11 +99,14 @@ class AnalysisAgent:
 
         for company in companies_to_analyse:
             name = company.get("name", "Unknown")
-            url = company.get("website", "")
-            if not url or url == "Unknown":
-                status_callback(f"  Skipping website analysis for **{name}** — no URL found")
-                website_analyses[name] = _empty_analysis(name, url)
+            url = company.get("website") or ""
+            url = url.strip() if isinstance(url, str) else ""
+            if not url or url in ("Unknown", "None", "null"):
+                status_callback(f"  ⏭ Skipping website analysis for **{name}** — no website on file")
+                website_analyses[name] = _empty_analysis(name, url, error="No website found in CQC profile or web search")
                 continue
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
 
             status_callback(f"  Analysing website: **{name}** ({url})…")
             analysis = self._analyse_website(company_name=name, website_url=url)

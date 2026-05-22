@@ -365,10 +365,28 @@ class ResearchAgent:
                 }],
                 "verified_source": "CQC Syndication API",
             }
+            # If CQC includes a website and we don't have one yet, use it
+            if cqc_data.get("website") and not data.get("official_website") or data.get("official_website") in ("Unknown", ""):
+                if cqc_data.get("website"):
+                    data["official_website"] = cqc_data["website"]
             # Ensure lookup_status reflects authoritative data
             ls = data.get("lookup_status", {})
             ls["cqc_found"] = True
+            if cqc_data.get("website"):
+                ls["website_found"] = True
             data["lookup_status"] = ls
+
+        # Strip any hallucinated procurement URLs from the contracts list
+        contracts = data.get("contracts_with_commissioner", []) or []
+        cleaned = []
+        for c in contracts:
+            if isinstance(c, dict):
+                src = c.get("source_url", "")
+                if src and _is_url_suspicious(src):
+                    status_callback(f"    🛑 Dropped fabricated contract URL: {src}")
+                    continue
+            cleaned.append(c)
+        data["contracts_with_commissioner"] = cleaned
 
         return data
 
@@ -509,6 +527,10 @@ class ResearchAgent:
             merged["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
             merged["cqc_profile_url"] = cqc_data.get("cqc_url", "")
             merged["cqc_verified"] = True
+            # If CQC has a website and we don't already have one, use it
+            existing_site = merged.get("website") or ""
+            if cqc_data.get("website") and existing_site in ("", None, "Unknown"):
+                merged["website"] = cqc_data["website"]
         return merged
 
     # ------------------------------------------------------------------

@@ -104,6 +104,11 @@ class CQCClient:
         last_inspection = data.get("lastInspection", {}) or {}
         inspection_date = last_inspection.get("date") or data.get("lastReport", {}).get("publicationDate")
 
+        # The CQC API includes a website field on locations (and sometimes providers)
+        # — extract it so we don't rely on the LLM finding it.
+        website = data.get("website") or ""
+        phone = data.get("phoneNumber") or ""
+
         result = {
             "provider_id": data.get("providerId") or "",
             "location_id": data.get("locationId") or "",
@@ -112,6 +117,8 @@ class CQCClient:
             "last_inspection_date": inspection_date or "Unknown",
             "registration_status": data.get("registrationStatus") or "",
             "registration_date": data.get("registrationDate") or "",
+            "website": website,
+            "phone": phone,
             "address": ", ".join(filter(None, [
                 str(data.get("postalAddressLine1") or ""),
                 str(data.get("postalAddressLine2") or ""),

@@ -527,13 +527,28 @@ class DashboardRenderer:
         st.subheader("Benchmarking Matrix")
 
         benchmarking = self.r.get("benchmarking", {})
-        criteria_list = self.r.get("benchmarking_criteria", list(CRITERION_LABELS.keys()))
 
         if not benchmarking:
             st.warning("Benchmarking data was not generated.")
             return
 
         companies = list(benchmarking.keys())
+
+        # Derive the criteria list from the actual data, NOT from the saved
+        # benchmarking_criteria field. Self-heals against version mismatches
+        # where the criteria list and scored keys drift apart.
+        first_scores = next(iter(benchmarking.values()), {})
+        criteria_list = list(first_scores.keys())
+
+        # Put cqc_rating first if present, then everything else in saved order
+        if "cqc_rating" in criteria_list:
+            criteria_list.remove("cqc_rating")
+            criteria_list.insert(0, "cqc_rating")
+        # Push overall to the end
+        for tail_key in ("overall_bid_threat", "overall_competitor_strength"):
+            if tail_key in criteria_list:
+                criteria_list.remove(tail_key)
+                criteria_list.append(tail_key)
 
         # Render the matrix as HTML so we can colour-code CQC word ratings
         # and 1-5 scores in the same table cell-by-cell.
