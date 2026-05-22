@@ -31,6 +31,10 @@ class ResearchConfig:
     known_competitors: List[str] = field(default_factory=list)
     manual_urls: List[str] = field(default_factory=list)
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # External data source API keys (read from Streamlit secrets / env vars)
+    cqc_api_key: str = ""
+    brave_api_key: str = ""
+    companies_house_api_key: str = ""
 
     # ---- Depth-dependent limits ----------------------------------------
 
@@ -81,6 +85,22 @@ class ResearchAgent:
         self._discovery_template = self.DISCOVERY_PATH.read_text(encoding="utf-8")
         self._drilldown_template = self.DRILLDOWN_PATH.read_text(encoding="utf-8")
         self._target_profile_template = self.TARGET_PROFILE_PATH.read_text(encoding="utf-8")
+
+        # Initialise authoritative data source clients if keys present
+        self.cqc = None
+        self.brave = None
+        if config.cqc_api_key:
+            try:
+                from data_sources.cqc import CQCClient
+                self.cqc = CQCClient(config.cqc_api_key)
+            except Exception:
+                self.cqc = None
+        if config.brave_api_key:
+            try:
+                from data_sources.brave import BraveClient
+                self.brave = BraveClient(config.brave_api_key)
+            except Exception:
+                self.brave = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -234,24 +254,93 @@ class ResearchAgent:
         return output
 
     # ------------------------------------------------------------------
+    # Authoritative CQC lookup (Brave → CQC API)
+    # ------------------------------------------------------------------
+
+    def _lookup_cqc(self, provider_name: str, status_callback: StatusCallback = _noop) -> Optional[Dict[str, Any]]:
+        """
+        Use Brave Search to find a cqc.org.uk profile URL for a named provider,
+        then fetch authoritative data from the CQC API. Returns a summarised
+        profile dict, or None.
+        """
+        if not (self.brave and self.cqc):
+            return None
+        try:
+            hit = self.brave.find_cqc_profile(provider_name)
+            if not hit:
+                return None
+            cqc_url = hit.get("url", "")
+            raw = self.cqc.fetch_from_url(cqc_url)
+            if not raw:
+                return None
+            summary = self.cqc.summarise_provider_profile(raw)
+            summary["_brave_snippet"] = hit.get("description", "")
+            status_callback(f"    ✅ CQC verified: {provider_name} → {summary.get('overall_rating', 'Unknown')}")
+            return summary
+        except Exception as exc:
+            status_callback(f"    ⚠️ CQC lookup error for {provider_name}: {exc}")
+            return None
+
+    # ------------------------------------------------------------------
     # Phase 0a: Verified target-company profile (Deep Scan only)
     # ------------------------------------------------------------------
 
     def _research_target_profile(self, status_callback: StatusCallback = _noop) -> Dict[str, Any]:
         cfg = self.config
+
+        # First — try authoritative CQC lookup if API keys configured
+        cqc_data = self._lookup_cqc(cfg.target_company, status_callback)
+
+        # Build context to pass to the LLM about what we already verified
+        verified_context = ""
+        if cqc_data:
+            verified_context = (
+                "\n=== AUTHORITATIVE CQC DATA (use these values verbatim) ===\n"
+                f"CQC Rating: {cqc_data.get('overall_rating', 'Unknown')}\n"
+                f"Last Inspection: {cqc_data.get('last_inspection_date', 'Unknown')}\n"
+                f"CQC Profile URL: {cqc_data.get('cqc_url', '')}\n"
+                f"Registration Status: {cqc_data.get('registration_status', '')}\n"
+                f"Address: {cqc_data.get('address', '')}\n"
+                f"Local Authority: {cqc_data.get('local_authority', '')}\n"
+                f"Sub-ratings: {cqc_data.get('sub_ratings', {})}\n"
+            )
+
         prompt = _fill_template(self._target_profile_template,
             target_company=cfg.target_company,
             target_website=cfg.target_website or "Not provided — search for it",
             commissioner=cfg.commissioner,
             service_area=cfg.service_area,
             geographic_area=cfg.geographic_area or "Not specified",
-        )
+        ) + verified_context
+
         result = self.provider.research(prompt, max_tokens=4000)
         if not result.ok:
             status_callback(f"  ⚠️ Target profile lookup failed: {result.error}")
-            return {}
-        data = _extract_json(result.content)
-        return data if data else {}
+            return {"cqc": {"rating": cqc_data.get("overall_rating", "Unknown")} if cqc_data else {}}
+
+        data = _extract_json(result.content) or {}
+
+        # Overwrite CQC section with authoritative API data if we have it
+        if cqc_data:
+            data["cqc"] = {
+                "rating": cqc_data.get("overall_rating", "Unknown"),
+                "last_inspection_date": cqc_data.get("last_inspection_date", "Unknown"),
+                "provider_id": cqc_data.get("provider_id", ""),
+                "profile_url": cqc_data.get("cqc_url", ""),
+                "sub_ratings": cqc_data.get("sub_ratings", {}),
+                "registered_locations": [{
+                    "name": cqc_data.get("name", ""),
+                    "rating": cqc_data.get("overall_rating", "Unknown"),
+                    "url": cqc_data.get("cqc_url", ""),
+                }],
+                "verified_source": "CQC Syndication API",
+            }
+            # Ensure lookup_status reflects authoritative data
+            ls = data.get("lookup_status", {})
+            ls["cqc_found"] = True
+            data["lookup_status"] = ls
+
+        return data
 
     # ------------------------------------------------------------------
     # Phase 0b: Dedicated competitor discovery (Deep Scan only)
@@ -331,12 +420,26 @@ class ResearchAgent:
         cfg = self.config
         name = competitor.get("name", "")
 
+        # First — try authoritative CQC lookup
+        cqc_data = self._lookup_cqc(name)
+
+        verified_context = ""
+        if cqc_data:
+            verified_context = (
+                f"\n\nAUTHORITATIVE CQC DATA (verbatim — do not change):\n"
+                f"- CQC Rating: {cqc_data.get('overall_rating', 'Unknown')}\n"
+                f"- CQC Profile URL: {cqc_data.get('cqc_url', '')}\n"
+                f"- Last Inspection: {cqc_data.get('last_inspection_date', 'Unknown')}\n"
+                f"- Address: {cqc_data.get('address', '')}\n"
+                f"- Local Authority: {cqc_data.get('local_authority', '')}\n"
+            )
+
         current_profile = json.dumps({
             k: competitor.get(k) for k in (
                 "website", "cqc_rating", "companies_house_number",
                 "services", "geographic_coverage", "selection_rationale",
             )
-        }, indent=2)
+        }, indent=2) + verified_context
 
         prompt = _fill_template(self._enrich_template,
             company_name=name,
@@ -348,11 +451,20 @@ class ResearchAgent:
 
         result = self.provider.research(prompt, max_tokens=3500)
         if not result.ok:
-            return competitor  # Keep original if enrichment fails
+            # Even if LLM call failed, stamp CQC data so it's not lost
+            base = dict(competitor)
+            if cqc_data:
+                base["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
+                base["cqc_profile_url"] = cqc_data.get("cqc_url", "")
+            return base
 
         enriched_data = _extract_json(result.content)
         if not enriched_data:
-            return competitor
+            base = dict(competitor)
+            if cqc_data:
+                base["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
+                base["cqc_profile_url"] = cqc_data.get("cqc_url", "")
+            return base
 
         # Merge — prefer enriched data where it's non-empty, but preserve rationale
         merged = dict(competitor)
@@ -362,6 +474,11 @@ class ResearchAgent:
         # Always preserve original selection_rationale
         if competitor.get("selection_rationale"):
             merged["selection_rationale"] = competitor["selection_rationale"]
+        # ALWAYS overwrite CQC fields with authoritative API data if present
+        if cqc_data:
+            merged["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
+            merged["cqc_profile_url"] = cqc_data.get("cqc_url", "")
+            merged["cqc_verified"] = True
         return merged
 
     # ------------------------------------------------------------------

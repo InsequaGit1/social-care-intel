@@ -257,6 +257,33 @@ def _run_research(
 ):
     run_id = str(uuid.uuid4())
 
+    # Read optional external data source keys from env vars or Streamlit secrets
+    def _read_secret(name: str) -> str:
+        val = os.environ.get(name, "")
+        if not val:
+            try:
+                val = st.secrets.get(name, "")
+            except Exception:
+                val = ""
+        return val
+
+    cqc_key = _read_secret("CQC_API_KEY")
+    brave_key = _read_secret("BRAVE_API_KEY")
+    ch_key = _read_secret("COMPANIES_HOUSE_API_KEY")
+
+    # Surface which authoritative sources are active
+    enabled = []
+    if cqc_key:
+        enabled.append("CQC API")
+    if brave_key:
+        enabled.append("Brave Search")
+    if ch_key:
+        enabled.append("Companies House")
+    if enabled:
+        st.info("🔐 Authoritative data sources active: " + ", ".join(enabled))
+    else:
+        st.info("ℹ️ Running on LLM web search only. Add CQC_API_KEY / BRAVE_API_KEY to Streamlit secrets for higher accuracy.")
+
     config = ResearchConfig(
         commissioner=commissioner,
         service_area=service_area,
@@ -268,6 +295,9 @@ def _run_research(
         manual_urls=manual_urls,
         research_depth=research_depth,
         run_id=run_id,
+        cqc_api_key=cqc_key,
+        brave_api_key=brave_key,
+        companies_house_api_key=ch_key,
     )
 
     provider = LLMWebProvider(
