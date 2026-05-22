@@ -1,4 +1,6 @@
-You are an expert UK social care bid strategist. Score ONE company against the standard benchmarking criteria for this opportunity.
+You are an expert UK social care bid strategist. Score ONE company against five benchmarking criteria.
+
+The CQC rating is NOT one of these criteria — it is captured separately as an authoritative word rating from the CQC API. Do not score CQC here.
 
 === OPPORTUNITY CONTEXT ===
 Target Company: {target_company}
@@ -19,54 +21,56 @@ Geographic Area: {geographic_area}
 4 = Strong / Good evidence
 5 = Exceptional / Compelling evidence
 
-=== CRITERIA TO SCORE ===
-You MUST score on all 14 criteria below. For each, give a score 1–5, a one-sentence justification, and the source if available.
+=== THE FIVE CRITERIA TO SCORE ===
 
-1. service_match — match to the specific service area and need
-2. local_presence — operations / staff / contracts in the geographic area
-3. commissioner_relationship — existing or historic work with this commissioner
-4. contract_history — quality and relevance of past contracts in this area
-5. quality_compliance — evidence of quality standards, accreditations, compliance
-6. cqc_position — CQC rating (1=Inadequate/unknown, 3=Good, 5=Outstanding)
-7. workforce_capacity — sufficient skilled workforce evidence
-8. mobilisation_capability — track record of mobilising new contracts at scale
-9. digital_innovation — digital systems, reporting, innovation
-10. specialist_capability — specialist skills, accreditations relevant to service
-11. social_value — evidenced social value (employment, training, community)
-12. partnership_working — partnerships with NHS, LAs, VCS, peers
-13. website_credibility — credibility and evidence-base of public profile
-14. overall_competitor_strength — holistic strength for this opportunity
+1. quality_compliance
+   Non-CQC quality evidence: accreditations (Skills for Care, IIP, ISO etc.),
+   outcomes data, audit findings, complaints handling, internal QA frameworks.
+   Note: do NOT score CQC rating here — that's captured separately.
 
-=== GUARDRAILS ===
-- Base each score on the evidence provided above. Do NOT make up evidence.
-- If there is no public evidence for a criterion, score 1–2 and note "No reliable public source found".
-- If a score relies on inference, set analyst_inference: true.
+2. local_track_record
+   Combines local presence + commissioner relationship + contract history.
+   - Geographic operation in the target area (offices, registered locations)
+   - Named contracts with the specific commissioner (current or historic)
+   - Frameworks they're on with this or peer commissioners
+   - Award notices, decision papers, council references
 
-=== STRICT RULES PER CRITERION ===
-- cqc_position: You MAY only score 3, 4, or 5 if the company profile or research above contains an actual cqc.org.uk URL for the company. If no cqc.org.uk URL is present, the cqc_position score MUST be 1 or 2 and the justification MUST say "CQC rating unverified — no cqc.org.uk source available".
-- contract_history: You MAY only score 3+ if specific named contracts are listed in the profile. Generic statements like "operates in the area" do not justify a score above 2.
-- commissioner_relationship: You MAY only score 3+ if there is a named contract or framework with the specific commissioner. Mere geographic operation in the area does not justify a high score.
-- digital_innovation, social_value, partnership_working: You MAY only score 3+ if there is specific cited evidence. Generic claims do not qualify.
+3. delivery_strength
+   Combines workforce capacity + mobilisation capability.
+   - Staff numbers, recruitment pipeline, retention metrics
+   - Training and specialist skills relevant to the service area
+   - Evidence of mobilising new or transferred contracts at scale
+   - Geographic delivery infrastructure
+
+4. strategic_differentiators
+   Combines digital innovation + social value + partnership working + website credibility.
+   - Digital systems, reporting, data, technology investment
+   - Social value: employment, training, community benefit, sustainability
+   - Partnership working with NHS, LAs, VCS, peer providers
+   - Public-facing credibility and evidence quality
+
+5. overall_bid_threat
+   Holistic assessment of how strong a competitor this company is for this opportunity.
+   Consider: their CQC rating (passed in the profile), all four scored criteria above,
+   and the specific commissioner priorities.
+
+=== STRICT RULES ===
+- Base each score on the evidence provided. Do NOT make up evidence.
+- If there is no public evidence for a criterion, score 1–2 and justify with "No reliable public source found".
+- local_track_record: score 3+ ONLY if there are named contracts or framework memberships with this specific commissioner. Generic geographic presence does not justify 3+.
+- strategic_differentiators: score 3+ ONLY if there is specific cited evidence (named partnerships, named digital tools, named social value programmes). Generic claims do not qualify.
+- If a score relies on inference rather than cited evidence, set analyst_inference: true.
 
 === OUTPUT FORMAT ===
-Return ONLY valid JSON. No preamble, no markdown:
+Return ONLY valid JSON:
 
 {
   "company": "{company_name}",
   "scores": {
-    "service_match": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "local_presence": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "commissioner_relationship": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "contract_history": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
     "quality_compliance": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "cqc_position": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "workforce_capacity": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "mobilisation_capability": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "digital_innovation": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "specialist_capability": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "social_value": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "partnership_working": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "website_credibility": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
-    "overall_competitor_strength": { "score": 0, "justification": "", "source": "", "analyst_inference": false }
+    "local_track_record": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "delivery_strength": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "strategic_differentiators": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
+    "overall_bid_threat": { "score": 0, "justification": "", "source": "", "analyst_inference": false }
   }
 }

@@ -14,12 +14,28 @@ Geographic Area: {geographic_area}
 
 === YOUR TASK ===
 Produce:
-1. A 4–6 sentence executive summary of the competitive landscape, target company's position, and the 2-3 most decisive factors for this bid
-2. AT LEAST 8 prioritised bid positioning recommendations (target 10–12). Each MUST name specific evidence and ideally name a specific competitor weakness it addresses. Returning fewer than 8 is an INCOMPLETE response.
-3. 3–6 evidence gaps that would weaken a bid if not closed, with concrete actions
+1. A 4–6 sentence executive summary of the competitive landscape, target company's position, and the 2-3 most decisive factors for this bid.
+2. AT LEAST 8 prioritised bid positioning recommendations (target 10–12). EACH recommendation MUST follow the structure below. Returning fewer than 8 is an INCOMPLETE response.
+3. 3–6 evidence gaps that would weaken a bid if not closed, with concrete actions.
+
+=== STRUCTURE FOR EACH BID POSITIONING RECOMMENDATION ===
+Every recommendation must:
+- Name a specific competitor (or cluster of competitors) you are positioning against, citing their score(s) on the criteria in the scored summary above.
+- State a specific tactic the target company should use in their bid response (not a generic principle).
+- Quote the source of the evidence (e.g. the competitor's CQC rating, a score on a specific criterion, an item from the research data).
+
+REJECT generic platitudes like:
+- "Highlight quality compliance" (WHY? Against whom? With what evidence?)
+- "Leverage local presence" (Which evidence? Which competitor lacks this?)
+- "Emphasise CQC rating" (Which rating, vs whom?)
+
+ACCEPT specific, evidenced positioning like:
+- "Counter Caremark (overall threat 3/5, delivery_strength 4/5) by leading the workforce-capacity narrative with [target's specific evidence], because Caremark's strength on staffing is their main angle of attack."
+- "Exploit the gap that 6 of the 10 competitors scored 1/5 on strategic_differentiators by including a named digital case study with outcome data — this is a low-effort differentiator that few competitors can match."
+- "Defend against Fair Havens Hospice (CQC Good, delivery_strength 2/5) by anticipating their specialist-care narrative and proactively addressing how the target company delivers equivalent specialism without the cost premium."
 
 === WHY 8+ RECOMMENDATIONS MATTERS ===
-A bid team uses this output to decide what to write. 3 points means they have to invent the rest. 10 points gives them a working bid skeleton. If you only have 8 strong points, that's fine. But scour the data — usually there are easily 10+ angles across: differentiation, weaknesses to defend, competitor counters, commissioner priorities, social value, mobilisation, pricing positioning, partnership opportunities, digital evidence, workforce angles, and risk mitigation.
+A bid team uses this output to decide what to write. 3 points means they have to invent the rest. 10 points gives them a working bid skeleton. Scour the data — there are usually 10+ angles across: defending against the highest-threat competitors, exploiting widespread weaknesses, addressing commissioner priorities, mobilisation positioning, social value differentiators, workforce angles, partnership opportunities, risk mitigation.
 
 === GUARDRAILS ===
 - Base recommendations on evidence in the scored data above. Do NOT invent strengths or weaknesses.

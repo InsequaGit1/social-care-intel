@@ -54,11 +54,18 @@ def _ev_badge(level: str) -> str:
 
 
 CRITERION_LABELS = {
+    # New 6-criteria schema (current)
+    "cqc_rating": "CQC Rating",
+    "quality_compliance": "Quality & Compliance",
+    "local_track_record": "Local Track Record",
+    "delivery_strength": "Delivery Strength",
+    "strategic_differentiators": "Strategic Differentiators",
+    "overall_bid_threat": "Overall Bid Threat",
+    # Legacy 14-criteria schema (for older saved runs)
     "service_match": "Service Match",
     "local_presence": "Local Presence",
     "commissioner_relationship": "Commissioner Relationship",
     "contract_history": "Contract History",
-    "quality_compliance": "Quality & Compliance",
     "cqc_position": "CQC Position",
     "workforce_capacity": "Workforce Capacity",
     "mobilisation_capability": "Mobilisation Capability",
@@ -69,6 +76,34 @@ CRITERION_LABELS = {
     "website_credibility": "Website Credibility",
     "overall_competitor_strength": "Overall Strength",
 }
+
+# Colour mapping for CQC word ratings
+CQC_RATING_COLOURS = {
+    "Outstanding": "#1565c0",            # blue
+    "Good": "#388e3c",                   # green
+    "Requires improvement": "#f57c00",   # orange
+    "Inadequate": "#d32f2f",             # red
+    "No published rating": "#9e9e9e",    # grey
+    "Unknown": "#9e9e9e",                # grey
+}
+
+
+def _cqc_badge_html(value: str, verified: bool = False) -> str:
+    # Normalise to title-case for lookup
+    norm = (value or "Unknown").strip()
+    colour = CQC_RATING_COLOURS.get(norm, "#9e9e9e")
+    # Try title-case variants if not directly found
+    if colour == "#9e9e9e" and norm.lower() != "unknown":
+        for k, v in CQC_RATING_COLOURS.items():
+            if k.lower() == norm.lower():
+                colour = v
+                break
+    suffix = " ✓" if verified else ""
+    return (
+        f'<span style="background:{colour};color:white;padding:2px 8px;'
+        f'border-radius:4px;font-weight:bold;font-size:0.85em;">'
+        f'{norm}{suffix}</span>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -499,39 +534,53 @@ class DashboardRenderer:
 
         companies = list(benchmarking.keys())
 
-        # Build summary scores table
-        rows = []
+        # Render the matrix as HTML so we can colour-code CQC word ratings
+        # and 1-5 scores in the same table cell-by-cell.
+        col_labels = [CRITERION_LABELS.get(c, c) for c in criteria_list]
+        html_parts = [
+            '<div style="overflow-x:auto;">',
+            '<table style="border-collapse:collapse;width:100%;font-size:0.9em;">',
+            '<thead><tr>',
+            '<th style="text-align:left;padding:8px 10px;background:#1a237e;color:white;">Company</th>',
+        ]
+        for label in col_labels:
+            html_parts.append(
+                f'<th style="text-align:center;padding:8px 6px;background:#1a237e;color:white;">{label}</th>'
+            )
+        html_parts.append('</tr></thead><tbody>')
+
         for company in companies:
             scores = benchmarking[company]
-            row = {"Company": company}
-            total = 0
-            count = 0
+            cells = [f'<td style="padding:6px 10px;border-bottom:1px solid #e0e0e0;font-weight:bold;">{company}</td>']
             for crit in criteria_list:
-                if crit == "overall_competitor_strength":
-                    continue
                 val = scores.get(crit, {})
-                s = val.get("score", 0) if isinstance(val, dict) else val
-                row[CRITERION_LABELS.get(crit, crit)] = s
-                total += s
-                count += 1
-            overall = scores.get("overall_competitor_strength", {})
-            row["Overall"] = overall.get("score", 0) if isinstance(overall, dict) else overall
-            rows.append(row)
+                if crit == "cqc_rating":
+                    if isinstance(val, dict):
+                        word = val.get("value", "Unknown")
+                        verified = val.get("verified", False)
+                        cell = _cqc_badge_html(word, verified)
+                    else:
+                        cell = _cqc_badge_html(str(val) if val else "Unknown")
+                    cells.append(
+                        f'<td style="padding:6px;border-bottom:1px solid #e0e0e0;text-align:center;">{cell}</td>'
+                    )
+                else:
+                    s = val.get("score", 0) if isinstance(val, dict) else (val if isinstance(val, (int, float)) else 0)
+                    try:
+                        s_int = int(s)
+                    except (ValueError, TypeError):
+                        s_int = 0
+                    colour = SCORE_COLOURS.get(s_int, "#eee")
+                    text_colour = "white" if s_int >= 4 else ("black" if s_int == 3 else "white")
+                    display = f"{s_int}/5" if s_int else "—"
+                    cells.append(
+                        f'<td style="padding:6px;border-bottom:1px solid #e0e0e0;text-align:center;'
+                        f'background:{colour};color:{text_colour};font-weight:bold;">{display}</td>'
+                    )
+            html_parts.append('<tr>' + ''.join(cells) + '</tr>')
+        html_parts.append('</tbody></table></div>')
 
-        if rows:
-            df = pd.DataFrame(rows).set_index("Company")
-
-            def colour_score(val):
-                try:
-                    v = int(val)
-                    c = SCORE_COLOURS.get(v, "#eee")
-                    text = "white" if v >= 4 else ("black" if v == 3 else "white")
-                    return f"background-color: {c}; color: {text}; font-weight: bold; text-align: center"
-                except (ValueError, TypeError):
-                    return ""
-
-            styled = df.style.map(colour_score) if hasattr(df.style, "map") else df.style.applymap(colour_score)
-            st.dataframe(styled, use_container_width=True)
+        st.markdown('\n'.join(html_parts), unsafe_allow_html=True)
 
         st.divider()
         st.markdown("### Score Justifications")
@@ -541,6 +590,23 @@ class DashboardRenderer:
                 scores = benchmarking[company]
                 for crit in criteria_list:
                     val = scores.get(crit, {})
+                    label = CRITERION_LABELS.get(crit, crit)
+
+                    if crit == "cqc_rating":
+                        if isinstance(val, dict):
+                            word = val.get("value", "Unknown")
+                            verified = val.get("verified", False)
+                            url = val.get("url", "")
+                            st.markdown(
+                                f"**{label}:** {_cqc_badge_html(word, verified)}",
+                                unsafe_allow_html=True,
+                            )
+                            if url and url.startswith("http"):
+                                st.markdown(f"  → [CQC profile]({url})")
+                            elif not verified:
+                                st.markdown("  → *Not verified against CQC Syndication API*")
+                        continue
+
                     if not isinstance(val, dict):
                         continue
                     score = val.get("score", 0)
@@ -548,7 +614,6 @@ class DashboardRenderer:
                     source = val.get("source", "")
                     is_inference = val.get("analyst_inference", False)
 
-                    label = CRITERION_LABELS.get(crit, crit)
                     badge = _score_badge(score)
                     inf_note = " *(analyst inference)*" if is_inference else ""
 
@@ -781,8 +846,16 @@ class DashboardRenderer:
                 row_vals = []
                 for crit in criteria:
                     val = scores.get(crit, {})
-                    score = val.get("score", "—") if isinstance(val, dict) else val
-                    row_vals.append(str(score))
+                    if crit == "cqc_rating":
+                        if isinstance(val, dict):
+                            word = val.get("value", "Unknown")
+                            tick = " ✓" if val.get("verified") else ""
+                            row_vals.append(f"{word}{tick}")
+                        else:
+                            row_vals.append(str(val) if val else "Unknown")
+                    else:
+                        score = val.get("score", "—") if isinstance(val, dict) else val
+                        row_vals.append(str(score))
                 lines.append(f"| {company} | " + " | ".join(row_vals) + " |")
             lines.append("")
 

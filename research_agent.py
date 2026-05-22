@@ -254,28 +254,58 @@ class ResearchAgent:
         return output
 
     # ------------------------------------------------------------------
-    # Authoritative CQC lookup (Brave → CQC API)
+    # Authoritative CQC lookup (Brave → CQC API) with name confidence
     # ------------------------------------------------------------------
+
+    CQC_MATCH_THRESHOLD = 0.6
 
     def _lookup_cqc(self, provider_name: str, status_callback: StatusCallback = _noop) -> Optional[Dict[str, Any]]:
         """
-        Use Brave Search to find a cqc.org.uk profile URL for a named provider,
-        then fetch authoritative data from the CQC API. Returns a summarised
-        profile dict, or None.
+        Find a CQC profile for a named provider, using Brave to surface
+        candidate URLs and a name-similarity check to disambiguate.
+        Only returns data when confidence >= CQC_MATCH_THRESHOLD.
         """
         if not (self.brave and self.cqc):
             return None
         try:
-            hit = self.brave.find_cqc_profile(provider_name)
-            if not hit:
+            results = self.brave.search(f'site:cqc.org.uk "{provider_name}"', count=8)
+            best = None
+            best_score = 0.0
+            best_candidate = ""
+            for r in results:
+                url = r.get("url", "") or ""
+                title = r.get("title", "") or ""
+                if "cqc.org.uk" not in url:
+                    continue
+                if not self.cqc.extract_id_from_url(url):
+                    continue
+                # Title format: "Provider Name - <Provider|Location> | Care Quality Commission ..."
+                candidate_name = title.split(" - ")[0].split(" | ")[0].strip()
+                score = _name_match_confidence(provider_name, candidate_name)
+                if score > best_score:
+                    best_score = score
+                    best = r
+                    best_candidate = candidate_name
+
+            if not best or best_score < self.CQC_MATCH_THRESHOLD:
+                status_callback(
+                    f"    ⚠️ CQC: no confident match for **{provider_name}** "
+                    f"(best candidate '{best_candidate}' scored {best_score:.2f}, threshold {self.CQC_MATCH_THRESHOLD})"
+                )
                 return None
-            cqc_url = hit.get("url", "")
+
+            cqc_url = best.get("url", "")
             raw = self.cqc.fetch_from_url(cqc_url)
             if not raw:
                 return None
             summary = self.cqc.summarise_provider_profile(raw)
-            summary["_brave_snippet"] = hit.get("description", "")
-            status_callback(f"    ✅ CQC verified: {provider_name} → {summary.get('overall_rating', 'Unknown')}")
+            summary["_brave_snippet"] = best.get("description", "")
+            summary["_match_confidence"] = round(best_score, 2)
+            summary["_matched_name"] = best_candidate
+            status_callback(
+                f"    ✅ CQC verified: **{provider_name}** → '{best_candidate}' → "
+                f"{summary.get('overall_rating', 'Unknown')} (confidence {best_score:.2f})"
+            )
             return summary
         except Exception as exc:
             status_callback(f"    ⚠️ CQC lookup error for {provider_name}: {exc}")
@@ -560,6 +590,57 @@ def _extract_json(text: str) -> Dict[str, Any]:
             pass
 
     return {}
+
+
+def _normalise_company_name(name: str) -> str:
+    """Lowercase, strip parenthetical content, punctuation, and company-form suffixes."""
+    if not name:
+        return ""
+    s = name.lower()
+    s = re.sub(r"\([^)]*\)", " ", s)              # remove (...) blocks
+    s = re.sub(r"[^\w\s]", " ", s)                # strip punctuation
+    s = re.sub(r"\b(ltd|limited|plc|llp|llc|inc|the|co)\b", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _name_match_confidence(query: str, candidate: str) -> float:
+    """
+    Return a 0-1 confidence that `candidate` refers to the same company as `query`.
+
+    Examples (threshold 0.6):
+      "Ashley Care Ltd" vs "Ashley Care Limited"                       → 1.0    accept
+      "Bluebird Care" vs "Bluebird Care (Southend & Rochford)"         → 1.0    accept
+      "Ashley Care Ltd" vs "Ashley Community Care Services Limited"    → 0.35   reject
+      "Mears Care" vs "Mears Group Ltd"                                → ~0.1   reject
+    """
+    nq = _normalise_company_name(query)
+    nc = _normalise_company_name(candidate)
+    if not nq or not nc:
+        return 0.0
+
+    if nq == nc:
+        return 1.0
+
+    # Query phrase appears as contiguous substring of candidate (token boundaries)
+    if f" {nq} " in f" {nc} ":
+        len_ratio = len(nq) / len(nc)
+        return min(1.0, 0.7 + 0.3 * len_ratio)
+
+    # Candidate is a shorter version of the query
+    if f" {nc} " in f" {nq} ":
+        len_ratio = len(nc) / len(nq)
+        return min(1.0, 0.6 + 0.3 * len_ratio)
+
+    # Token-level fallback — all query tokens present but not contiguous = weak
+    qt = set(nq.split())
+    ct = set(nc.split())
+    if not qt or not ct:
+        return 0.0
+    overlap = len(qt & ct)
+    if overlap == len(qt) and overlap >= 2:
+        return 0.35
+    return (overlap / max(len(qt), len(ct))) * 0.3
 
 
 def _compute_enrichment_status(comp: Dict, original_status: Dict) -> Dict:
