@@ -54,8 +54,9 @@ def _ev_badge(level: str) -> str:
 
 
 CRITERION_LABELS = {
-    # New 6-criteria schema (current)
+    # Current 7-criteria schema
     "cqc_rating": "CQC Rating",
+    "service_location_fit": "Service & Location Fit",
     "quality_compliance": "Quality & Compliance",
     "local_track_record": "Local Track Record",
     "delivery_strength": "Delivery Strength",

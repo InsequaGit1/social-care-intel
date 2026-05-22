@@ -21,37 +21,48 @@ Geographic Area: {geographic_area}
 4 = Strong / Good evidence
 5 = Exceptional / Compelling evidence
 
-=== THE FIVE CRITERIA TO SCORE ===
+=== THE SIX CRITERIA TO SCORE ===
 
-1. quality_compliance
+1. service_location_fit
+   Does this company REALISTICALLY fit this opportunity? Two factors:
+   (a) Service match — does their core service offer align with the commissioned service area?
+   (b) Geographic proximity — do they operate in or close to the commissioner's area?
+   - 5: Exact service match AND operates IN the commissioner's area
+   - 4: Strong service match AND operates in the broader region (~30 miles)
+   - 3: Provides similar services AND operates in adjacent regions
+   - 2: Provides related services OR operates further away
+   - 1: Service mismatch OR very distant operation (unlikely to bid)
+
+2. quality_compliance
    Non-CQC quality evidence: accreditations (Skills for Care, IIP, ISO etc.),
    outcomes data, audit findings, complaints handling, internal QA frameworks.
    Note: do NOT score CQC rating here — that's captured separately.
 
-2. local_track_record
-   Combines local presence + commissioner relationship + contract history.
-   - Geographic operation in the target area (offices, registered locations)
+3. local_track_record
+   Have they ACTUALLY delivered relevant work here? Distinct from service_location_fit
+   (which is "could they bid") — this is "have they bid/won before".
    - Named contracts with the specific commissioner (current or historic)
-   - Frameworks they're on with this or peer commissioners
-   - Award notices, decision papers, council references
+   - Frameworks they're on with this or peer commissioners in the area
+   - Award notices, decision papers, council references naming them
+   - Score 3+ ONLY if there is at least one named contract/framework with this commissioner.
 
-3. delivery_strength
+4. delivery_strength
    Combines workforce capacity + mobilisation capability.
    - Staff numbers, recruitment pipeline, retention metrics
    - Training and specialist skills relevant to the service area
    - Evidence of mobilising new or transferred contracts at scale
    - Geographic delivery infrastructure
 
-4. strategic_differentiators
+5. strategic_differentiators
    Combines digital innovation + social value + partnership working + website credibility.
    - Digital systems, reporting, data, technology investment
    - Social value: employment, training, community benefit, sustainability
    - Partnership working with NHS, LAs, VCS, peer providers
    - Public-facing credibility and evidence quality
 
-5. overall_bid_threat
+6. overall_bid_threat
    Holistic assessment of how strong a competitor this company is for this opportunity.
-   Consider: their CQC rating (passed in the profile), all four scored criteria above,
+   Consider: their CQC rating (passed in the profile), all five scored criteria above,
    and the specific commissioner priorities.
 
 === STRICT RULES ===
@@ -67,6 +78,7 @@ Return ONLY valid JSON:
 {
   "company": "{company_name}",
   "scores": {
+    "service_location_fit": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
     "quality_compliance": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
     "local_track_record": { "score": 0, "justification": "", "source": "", "analyst_inference": false },
     "delivery_strength": { "score": 0, "justification": "", "source": "", "analyst_inference": false },

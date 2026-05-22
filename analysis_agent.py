@@ -51,15 +51,16 @@ class AnalysisAgent:
     BENCH_SINGLE_PATH = Path(__file__).parent / "prompts" / "benchmarking_single_prompt.txt"
     SYNTH_PATH = Path(__file__).parent / "prompts" / "synthesis_prompt.txt"
 
-    # 6 criteria. cqc_rating is a WORD value pulled from API/research;
-    # the other 5 are 1-5 scored by the LLM.
+    # 7 criteria. cqc_rating is a WORD value pulled from API/research;
+    # the other 6 are 1-5 scored by the LLM.
     CRITERIA = [
         "cqc_rating",                 # word: Outstanding|Good|Requires Improvement|Inadequate|Unknown
+        "service_location_fit",       # 1-5 — service offer match + geographic proximity to commissioner
         "quality_compliance",         # 1-5
-        "local_track_record",         # 1-5 (was local_presence + commissioner_relationship + contract_history)
-        "delivery_strength",          # 1-5 (was workforce_capacity + mobilisation_capability)
-        "strategic_differentiators",  # 1-5 (was digital_innovation + social_value + partnership_working + website_credibility)
-        "overall_bid_threat",         # 1-5 (was overall_competitor_strength)
+        "local_track_record",         # 1-5 — actual delivered contracts in area / with commissioner
+        "delivery_strength",          # 1-5 — workforce_capacity + mobilisation_capability
+        "strategic_differentiators",  # 1-5 — digital + social value + partnership + website credibility
+        "overall_bid_threat",         # 1-5
     ]
     SCORED_CRITERIA = [c for c in CRITERIA if c != "cqc_rating"]
 
