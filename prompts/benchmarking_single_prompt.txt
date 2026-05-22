@@ -42,6 +42,12 @@ You MUST score on all 14 criteria below. For each, give a score 1–5, a one-sen
 - If there is no public evidence for a criterion, score 1–2 and note "No reliable public source found".
 - If a score relies on inference, set analyst_inference: true.
 
+=== STRICT RULES PER CRITERION ===
+- cqc_position: You MAY only score 3, 4, or 5 if the company profile or research above contains an actual cqc.org.uk URL for the company. If no cqc.org.uk URL is present, the cqc_position score MUST be 1 or 2 and the justification MUST say "CQC rating unverified — no cqc.org.uk source available".
+- contract_history: You MAY only score 3+ if specific named contracts are listed in the profile. Generic statements like "operates in the area" do not justify a score above 2.
+- commissioner_relationship: You MAY only score 3+ if there is a named contract or framework with the specific commissioner. Mere geographic operation in the area does not justify a high score.
+- digital_innovation, social_value, partnership_working: You MAY only score 3+ if there is specific cited evidence. Generic claims do not qualify.
+
 === OUTPUT FORMAT ===
 Return ONLY valid JSON. No preamble, no markdown:
 

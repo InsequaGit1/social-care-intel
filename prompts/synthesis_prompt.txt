@@ -15,8 +15,11 @@ Geographic Area: {geographic_area}
 === YOUR TASK ===
 Produce:
 1. A 4–6 sentence executive summary of the competitive landscape, target company's position, and the 2-3 most decisive factors for this bid
-2. 8–12 prioritised bid positioning recommendations — each MUST name specific evidence and ideally name a specific competitor weakness it addresses
+2. AT LEAST 8 prioritised bid positioning recommendations (target 10–12). Each MUST name specific evidence and ideally name a specific competitor weakness it addresses. Returning fewer than 8 is an INCOMPLETE response.
 3. 3–6 evidence gaps that would weaken a bid if not closed, with concrete actions
+
+=== WHY 8+ RECOMMENDATIONS MATTERS ===
+A bid team uses this output to decide what to write. 3 points means they have to invent the rest. 10 points gives them a working bid skeleton. If you only have 8 strong points, that's fine. But scour the data — usually there are easily 10+ angles across: differentiation, weaknesses to defend, competitor counters, commissioner priorities, social value, mobilisation, pricing positioning, partnership opportunities, digital evidence, workforce angles, and risk mitigation.
 
 === GUARDRAILS ===
 - Base recommendations on evidence in the scored data above. Do NOT invent strengths or weaknesses.

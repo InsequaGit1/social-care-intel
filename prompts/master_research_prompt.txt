@@ -100,6 +100,13 @@ These rules are MANDATORY. Breaking them invalidates your entire response:
 
 5. If you list 10 competitors and you only have evidence for 4, return only those 4. A short, accurate list is better than a long, padded list.
 
+6. PROCUREMENT URLS — ZERO TOLERANCE FOR FABRICATION:
+   - NEVER invent a Contracts Finder or Find-a-Tender URL.
+   - A real Contracts Finder notice URL looks like https://www.contractsfinder.service.gov.uk/Notice/<guid-or-numeric-id>. The IDs you have actually seen in search results are what you must use.
+   - Do NOT generate placeholder IDs like /Notice/1234567890, /Notice/1122334455, or any sequential or repeating-digit pattern. These are forbidden.
+   - If you cannot find a real notice URL for a contract you believe exists, OMIT THE ENTRY ENTIRELY rather than including a fabricated URL.
+   - Returning ZERO procurement notices is acceptable. Returning fabricated notices is NEVER acceptable and will be automatically rejected by downstream validation.
+
 === OUTPUT FORMAT ===
 Return ONLY a valid JSON object matching this schema exactly. No preamble, no markdown fences, no commentary outside the JSON:
 

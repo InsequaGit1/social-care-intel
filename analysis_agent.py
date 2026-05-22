@@ -82,7 +82,19 @@ class AnalysisAgent:
             website_analyses[name] = analysis
 
         # ---- Benchmarking (per-company) ------------------------------
-        all_companies = [{"name": cfg.target_company, "is_target": True}] + [
+        # Hydrate the target company row with verified target_profile data if present
+        target_profile = research_results.get("target_profile", {}) or {}
+        target_row = {
+            "name": cfg.target_company,
+            "is_target": True,
+            "website": target_profile.get("official_website", cfg.target_website or "Unknown"),
+            "cqc_rating": (target_profile.get("cqc", {}) or {}).get("rating", "Unknown"),
+            "cqc_profile_url": (target_profile.get("cqc", {}) or {}).get("profile_url", ""),
+            "companies_house_number": (target_profile.get("companies_house", {}) or {}).get("number", "Unknown"),
+            "known_contracts_with_commissioner": target_profile.get("contracts_with_commissioner", []),
+            "selection_rationale": "Target bidding company for this opportunity.",
+        }
+        all_companies = [target_row] + [
             {**c, "is_target": False} for c in companies_to_analyse
         ]
         status_callback(f"  📊 Scoring {len(all_companies)} companies across 14 criteria (one call per company)…")

@@ -71,6 +71,7 @@ class ResearchAgent:
     ENRICH_PATH = Path(__file__).parent / "prompts" / "competitor_enrichment_prompt.txt"
     DISCOVERY_PATH = Path(__file__).parent / "prompts" / "competitor_discovery_prompt.txt"
     DRILLDOWN_PATH = Path(__file__).parent / "prompts" / "provider_drilldown_prompt.txt"
+    TARGET_PROFILE_PATH = Path(__file__).parent / "prompts" / "target_profile_prompt.txt"
 
     def __init__(self, config: ResearchConfig, provider: SearchProvider):
         self.config = config
@@ -79,6 +80,7 @@ class ResearchAgent:
         self._enrich_template = self.ENRICH_PATH.read_text(encoding="utf-8")
         self._discovery_template = self.DISCOVERY_PATH.read_text(encoding="utf-8")
         self._drilldown_template = self.DRILLDOWN_PATH.read_text(encoding="utf-8")
+        self._target_profile_template = self.TARGET_PROFILE_PATH.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -89,12 +91,21 @@ class ResearchAgent:
 
         geo_label = cfg.geographic_area or "(area to be inferred from commissioner)"
 
-        # ---- Phase 0 (Deep only): Dedicated competitor discovery ----
+        # ---- Phase 0a (Deep only): Dedicated TARGET company profile lookup ----
+        target_profile: Dict[str, Any] = {}
+        if not cfg.is_quick:
+            status_callback(f"  🎯 Building verified profile for target: **{cfg.target_company}**…")
+            target_profile = self._research_target_profile(status_callback)
+            cqc_rating = target_profile.get("cqc", {}).get("rating", "Unknown")
+            ch_number = target_profile.get("companies_house", {}).get("number", "Unknown")
+            status_callback(f"    Target CQC rating: {cqc_rating} · Companies House: {ch_number}")
+
+        # ---- Phase 0b (Deep only): Dedicated competitor discovery ----
         discovered_competitors: List[Dict] = []
         if not cfg.is_quick:
-            status_callback(f"  🎯 Discovering providers in **{geo_label}** for **{cfg.service_area}**…")
+            status_callback(f"  🔍 Discovering providers in **{geo_label}** for **{cfg.service_area}**…")
             discovered_competitors = self._discover_competitors(status_callback)
-            status_callback(f"  Discovery returned {len(discovered_competitors)} providers")
+            status_callback(f"    Discovery returned {len(discovered_competitors)} providers")
 
         # ---- Phase 1: Master research (procurement + priorities + competitors) ----
         status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
@@ -126,7 +137,14 @@ class ResearchAgent:
         )
 
         # Enforce depth limits
-        procurement = raw_data.get("procurement", [])[: cfg.max_procurement_notices]
+        procurement_raw = raw_data.get("procurement", [])[: cfg.max_procurement_notices]
+        # Reject procurement entries with hallucinated-looking URLs
+        procurement, rejected = _filter_hallucinated_procurement(procurement_raw)
+        if rejected:
+            status_callback(
+                f"  🛑 Rejected {len(rejected)} procurement entries with suspicious URLs "
+                f"(likely model fabrication). Kept {len(procurement)}."
+            )
         master_competitors = raw_data.get("competitors", [])
         sources = combined_sources[: cfg.max_sources]
 
@@ -161,17 +179,27 @@ class ResearchAgent:
             enriched = []
             for i, comp in enumerate(competitors, 1):
                 name = comp.get("name", "Unknown")
+                # Stamp enrichment_status BEFORE running so it's always present
+                comp["enrichment_status"] = {
+                    "attempted": True,
+                    "website_found": False,
+                    "cqc_found": False,
+                    "companies_house_found": False,
+                    "contracts_found": False,
+                    "searches_run": [],
+                    "error": None,
+                }
                 status_callback(f"    [{i}/{len(competitors)}] Enriching **{name}** — website, CQC, Companies House, contracts…")
-                enriched_comp = self._enrich_competitor(comp)
-                # Always ensure enrichment_status is present so dashboard can show it
-                if "enrichment_status" not in enriched_comp:
-                    enriched_comp["enrichment_status"] = {
-                        "website_found": bool(enriched_comp.get("website") and enriched_comp.get("website") not in ("Unknown", "")),
-                        "cqc_found": bool(enriched_comp.get("cqc_profile_url")),
-                        "companies_house_found": bool(enriched_comp.get("companies_house_number") and enriched_comp.get("companies_house_number") != "Unknown"),
-                        "contracts_found": bool(enriched_comp.get("known_contracts_with_commissioner")),
-                        "searches_run": [],
-                    }
+                try:
+                    enriched_comp = self._enrich_competitor(comp)
+                    # Recompute the status flags from actual data after enrichment
+                    enriched_comp["enrichment_status"] = _compute_enrichment_status(
+                        enriched_comp,
+                        original_status=enriched_comp.get("enrichment_status", {}),
+                    )
+                except Exception as exc:
+                    comp["enrichment_status"]["error"] = str(exc)
+                    enriched_comp = comp
                 enriched.append(enriched_comp)
                 for url in enriched_comp.get("source_urls", []):
                     if url and not any(s.get("url") == url for s in sources):
@@ -193,6 +221,8 @@ class ResearchAgent:
                 "model_provider": self.provider.name,
             },
             "procurement": procurement,
+            "procurement_rejected": rejected,
+            "target_profile": target_profile,
             "competitors": competitors,
             "commissioner_priorities": raw_data.get("commissioner_priorities", []),
             "sources": sources,
@@ -204,7 +234,27 @@ class ResearchAgent:
         return output
 
     # ------------------------------------------------------------------
-    # Phase 0: Dedicated competitor discovery (Deep Scan only)
+    # Phase 0a: Verified target-company profile (Deep Scan only)
+    # ------------------------------------------------------------------
+
+    def _research_target_profile(self, status_callback: StatusCallback = _noop) -> Dict[str, Any]:
+        cfg = self.config
+        prompt = _fill_template(self._target_profile_template,
+            target_company=cfg.target_company,
+            target_website=cfg.target_website or "Not provided — search for it",
+            commissioner=cfg.commissioner,
+            service_area=cfg.service_area,
+            geographic_area=cfg.geographic_area or "Not specified",
+        )
+        result = self.provider.research(prompt, max_tokens=4000)
+        if not result.ok:
+            status_callback(f"  ⚠️ Target profile lookup failed: {result.error}")
+            return {}
+        data = _extract_json(result.content)
+        return data if data else {}
+
+    # ------------------------------------------------------------------
+    # Phase 0b: Dedicated competitor discovery (Deep Scan only)
     # ------------------------------------------------------------------
 
     def _discover_competitors(self, status_callback: StatusCallback = _noop) -> List[Dict[str, Any]]:
@@ -393,6 +443,71 @@ def _extract_json(text: str) -> Dict[str, Any]:
             pass
 
     return {}
+
+
+def _compute_enrichment_status(comp: Dict, original_status: Dict) -> Dict:
+    """Recompute enrichment flags from the actual data fields after enrichment ran."""
+    website = comp.get("website", "")
+    cqc_url = comp.get("cqc_profile_url", "")
+    ch_num = comp.get("companies_house_number", "")
+    contracts = comp.get("known_contracts_with_commissioner", [])
+
+    return {
+        "attempted": True,
+        "website_found": bool(website and website not in ("Unknown", "") and website.startswith("http")),
+        "cqc_found": bool(cqc_url and "cqc.org.uk" in cqc_url),
+        "companies_house_found": bool(ch_num and ch_num != "Unknown" and len(str(ch_num)) >= 6),
+        "contracts_found": bool(contracts),
+        "searches_run": original_status.get("searches_run", []),
+        "error": original_status.get("error"),
+    }
+
+
+def _is_url_suspicious(url: str) -> bool:
+    """
+    Detect URLs that look like LLM hallucinations.
+    Common patterns: sequential digits, repeated digit pairs, placeholder IDs.
+    """
+    if not url or not isinstance(url, str):
+        return True
+    # Strip protocol and find any long digit sequence in the path
+    import re as _re
+    m = _re.search(r"/Notice/(\d{6,})", url)
+    if m:
+        digits = m.group(1)
+        # Sequential ascending: 1234567890, 12345678
+        if digits in "0123456789" or digits in "9876543210":
+            return True
+        # Repeated digit pairs like 11223344, 33445566, 55667788, 66778899
+        pairs = [digits[i:i+2] for i in range(0, len(digits) - 1, 2)]
+        if len(pairs) >= 3 and all(p[0] == p[1] for p in pairs):
+            return True
+        # Each pair is +11 from the previous (1122, 2233, 3344, 4455 pattern)
+        if len(pairs) >= 3:
+            ints = []
+            try:
+                ints = [int(p[0]) for p in pairs]
+            except ValueError:
+                pass
+            if ints and all(ints[i+1] - ints[i] == 1 for i in range(len(ints) - 1)):
+                return True
+    # Reverse-sequential markers like 0987654321
+    if "/Notice/0987654321" in url or "/Notice/1234567890" in url:
+        return True
+    return False
+
+
+def _filter_hallucinated_procurement(procurement: List[Dict]) -> tuple:
+    """Return (kept, rejected) splitting procurement by suspicious-URL test."""
+    kept = []
+    rejected = []
+    for p in procurement:
+        url = p.get("source_url", "")
+        if _is_url_suspicious(url):
+            rejected.append(p)
+        else:
+            kept.append(p)
+    return kept, rejected
 
 
 def _looks_multi_provider(procurement: Dict[str, Any]) -> bool:

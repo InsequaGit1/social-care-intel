@@ -64,6 +64,7 @@ class LLMWebProvider(SearchProvider):
             tools=[{"type": "web_search_preview"}],
             input=prompt,
             max_output_tokens=max_tokens,
+            temperature=0,  # Determinism: same input → same output (within web search variance)
         )
 
         text_parts: List[str] = []
@@ -108,6 +109,7 @@ class LLMWebProvider(SearchProvider):
         config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             max_output_tokens=max_tokens,
+            temperature=0,  # Determinism
         )
 
         response = client.models.generate_content(
@@ -152,6 +154,7 @@ class LLMWebProvider(SearchProvider):
             response = client.messages.create(
                 model=self.model_name,
                 max_tokens=max_tokens,
+                temperature=0,  # Determinism
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages,
             )

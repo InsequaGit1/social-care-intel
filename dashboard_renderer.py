@@ -138,6 +138,43 @@ class DashboardRenderer:
             confidence = self.r.get("confidence_rating", "Low")
             st.metric("Confidence Rating", confidence)
 
+        # Target company verified profile (from dedicated lookup phase)
+        target_profile = self.r.get("target_profile") or {}
+        if target_profile:
+            st.divider()
+            st.markdown("### Target Company — Verified Profile")
+            tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+            cqc = target_profile.get("cqc", {}) or {}
+            ch = target_profile.get("companies_house", {}) or {}
+            with tcol1:
+                rating = cqc.get("rating", "Unknown")
+                st.metric("CQC Rating", rating)
+                if cqc.get("profile_url"):
+                    st.caption(f"[CQC profile]({cqc['profile_url']})")
+            with tcol2:
+                st.metric("Last Inspection", cqc.get("last_inspection_date", "Unknown"))
+            with tcol3:
+                st.metric("Companies House #", ch.get("number", "Unknown"))
+            with tcol4:
+                st.metric("Contracts with Commissioner", len(target_profile.get("contracts_with_commissioner", [])))
+            status = target_profile.get("lookup_status", {})
+            if status:
+                flags = []
+                flags.append("✅ Website" if status.get("website_found") else "❌ Website")
+                flags.append("✅ CQC" if status.get("cqc_found") else "❌ CQC")
+                flags.append("✅ Companies House" if status.get("companies_house_found") else "❌ Companies House")
+                flags.append("✅ Contracts" if status.get("contracts_found") else "❌ Contracts")
+                st.caption("Verified data sources: " + " · ".join(flags))
+
+        # Flag rejected procurement entries (hallucinated URLs)
+        rejected = self.r.get("procurement_rejected", [])
+        if rejected:
+            st.warning(
+                f"⚠️ {len(rejected)} procurement notice(s) were rejected by validation "
+                f"because their URLs appeared to be fabricated. These have been removed from the report. "
+                f"Re-run the research if this seems wrong."
+            )
+
         st.divider()
 
         col_a, col_b = st.columns([2, 1])
