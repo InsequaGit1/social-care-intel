@@ -229,7 +229,26 @@ class DashboardRenderer:
             st.markdown(f"**Depth:** {self.meta.get('research_depth', '').title()}")
             st.markdown(f"**Provider:** {self.meta.get('model_provider', '')}")
             st.markdown(f"**Time Period:** {self.meta.get('time_period', '')}")
-            st.markdown(f"**Geography:** {self.meta.get('geographic_area', '')}")
+            geo = self.meta.get('geographic_area', '') or self.meta.get('target_local_authority', '') or '—'
+            st.markdown(f"**Geography:** {geo}")
+            # Data provenance — how were competitors found, which APIs were live
+            dm = self.meta.get("discovery_method", "")
+            dm_label = {
+                "cqc+llm": "CQC area list + LLM",
+                "llm": "LLM only",
+                "none": "—",
+            }.get(dm, dm or "—")
+            st.markdown(f"**Discovery:** {dm_label}")
+            la = self.meta.get("target_local_authority", "")
+            if la:
+                st.markdown(f"**CQC Local Authority:** {la}")
+            badges = []
+            if self.meta.get("cqc_enabled"):
+                badges.append("🟢 CQC API")
+            if self.meta.get("brave_enabled"):
+                badges.append("🟢 Brave")
+            if badges:
+                st.caption("Live data sources: " + " · ".join(badges))
 
         st.divider()
 

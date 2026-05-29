@@ -124,12 +124,27 @@ class ResearchAgent:
             ch_number = target_profile.get("companies_house", {}).get("number", "Unknown")
             status_callback(f"    Target CQC rating: {cqc_rating} · Companies House: {ch_number}")
 
-        # ---- Phase 0b (Deep only): Dedicated competitor discovery ----
+        # ---- Phase 0b (Deep only): Competitor discovery ----
+        # Primary: authoritative CQC area list (every registered provider in
+        # the target's local authority). Supplement: LLM discovery for
+        # contract/framework players CQC wouldn't surface.
         discovered_competitors: List[Dict] = []
+        discovery_method = "none"
         if not cfg.is_quick:
-            status_callback(f"  🔍 Discovering providers in **{geo_label}** for **{cfg.service_area}**…")
-            discovered_competitors = self._discover_competitors(status_callback)
-            status_callback(f"    Discovery returned {len(discovered_competitors)} providers")
+            cqc_found: List[Dict] = []
+            if self.cqc and self._target_local_authority:
+                cqc_found = self._discover_competitors_cqc(status_callback)
+
+            status_callback(f"  🔍 LLM discovery for **{cfg.service_area}** in **{geo_label}**…")
+            llm_found = self._discover_competitors(status_callback)
+
+            # CQC-found take priority (authoritative + already carry CQC data)
+            discovered_competitors = _merge_competitors(cqc_found, llm_found)
+            discovery_method = "cqc+llm" if cqc_found else "llm"
+            status_callback(
+                f"    Discovery: {len(cqc_found)} from CQC area list + {len(llm_found)} from LLM "
+                f"→ {len(discovered_competitors)} unique"
+            )
 
         # ---- Phase 1: Master research (procurement + priorities + competitors) ----
         status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
@@ -243,6 +258,10 @@ class ResearchAgent:
                 "time_period": cfg.time_period,
                 "research_depth": cfg.research_depth,
                 "model_provider": self.provider.name,
+                "discovery_method": discovery_method,
+                "target_local_authority": self._target_local_authority,
+                "cqc_enabled": bool(self.cqc),
+                "brave_enabled": bool(self.brave),
             },
             "procurement": procurement,
             "procurement_rejected": rejected,
@@ -444,7 +463,110 @@ class ResearchAgent:
         return data
 
     # ------------------------------------------------------------------
-    # Phase 0b: Dedicated competitor discovery (Deep Scan only)
+    # Phase 0b (primary): Authoritative CQC area-based discovery
+    # ------------------------------------------------------------------
+
+    _RATING_RANK = {"Outstanding": 4, "Good": 3, "Requires improvement": 2, "Inadequate": 1}
+    CQC_DETAIL_CAP = 30  # max location detail fetches (bounds runtime)
+
+    def _service_is_care_home(self) -> Optional[bool]:
+        """Map the service area to CQC's careHome Y/N filter. None = ambiguous."""
+        s = (self.config.service_area or "").lower()
+        care_home_terms = ("residential", "care home", "nursing home", "nursing care",
+                           "rest home", "care homes")
+        community_terms = ("domiciliary", "home care", "homecare", "supported living",
+                          "live-in", "live in", "extra care", "reablement", "at home",
+                          "outreach", "community")
+        if any(t in s for t in care_home_terms):
+            return True
+        if any(t in s for t in community_terms):
+            return False
+        return None
+
+    def _discover_competitors_cqc(self, status_callback: StatusCallback = _noop) -> List[Dict[str, Any]]:
+        """
+        Query the CQC API for all registered providers in the target's local
+        authority, rank by significance (beds + rating), and return the top
+        competitors with CQC data already attached.
+        """
+        la = self._target_local_authority
+        care_home = self._service_is_care_home()
+        if care_home is None:
+            status_callback(
+                f"    ℹ️ Service area '{self.config.service_area}' is ambiguous for CQC "
+                f"care-home filter — using LLM discovery only."
+            )
+            return []
+
+        status_callback(f"  🏛 Querying CQC for all registered providers in **{la}**…")
+        try:
+            locations = self.cqc.list_locations(
+                local_authority=la, care_home=care_home, per_page=100, max_pages=2,
+            )
+        except Exception as exc:
+            status_callback(f"    ⚠️ CQC area query failed: {exc}")
+            return []
+
+        if not locations:
+            status_callback(f"    CQC returned no locations for {la}")
+            return []
+        status_callback(
+            f"    CQC returned {len(locations)} registered locations in {la}; "
+            f"fetching details for up to {self.CQC_DETAIL_CAP}…"
+        )
+
+        out: List[Dict[str, Any]] = []
+        for loc in locations[: self.CQC_DETAIL_CAP]:
+            name = loc.get("locationName", "").strip()
+            if not name:
+                continue
+            # Skip the target company itself
+            if _name_match_confidence(self.config.target_company, name) >= 0.6:
+                continue
+            try:
+                raw = self.cqc.get_location(loc["locationId"])
+            except Exception:
+                raw = None
+            if not raw:
+                continue
+            raw["_cqc_url"] = f"https://www.cqc.org.uk/location/{loc['locationId']}"
+            raw["_lookup_type"] = "location"
+            s = self.cqc.summarise_provider_profile(raw)
+            out.append({
+                "name": name,
+                "selection_rationale": (
+                    f"CQC-registered provider in {la} (authoritative CQC area list). "
+                    f"Rating: {s.get('overall_rating', 'Unknown')}."
+                ),
+                "website": s.get("website", ""),
+                "cqc_rating": s.get("overall_rating", "Unknown"),
+                "cqc_profile_url": s.get("cqc_url", ""),
+                "cqc_verified": True,
+                "cqc_data": {
+                    "sub_ratings": s.get("sub_ratings", {}),
+                    "number_of_beds": s.get("number_of_beds"),
+                    "registration_date": s.get("registration_date", ""),
+                    "last_inspection_date": s.get("last_inspection_date", ""),
+                    "service_types": s.get("service_types", []),
+                    "specialisms": s.get("specialisms", []),
+                    "local_authority": s.get("local_authority", ""),
+                    "town": s.get("town", ""),
+                },
+                "source_urls": [s.get("cqc_url", "")],
+            })
+
+        # Rank by significance: more beds first, then higher rating
+        out.sort(
+            key=lambda c: (
+                c["cqc_data"].get("number_of_beds") or 0,
+                self._RATING_RANK.get(c.get("cqc_rating"), 0),
+            ),
+            reverse=True,
+        )
+        return out
+
+    # ------------------------------------------------------------------
+    # Phase 0b (supplement): LLM-based competitor discovery (Deep Scan only)
     # ------------------------------------------------------------------
 
     def _discover_competitors(self, status_callback: StatusCallback = _noop) -> List[Dict[str, Any]]:
@@ -521,8 +643,12 @@ class ResearchAgent:
         cfg = self.config
         name = competitor.get("name", "")
 
-        # First — try authoritative CQC lookup
-        cqc_data = self._lookup_cqc(name)
+        # If CQC data is already attached (from CQC area discovery), skip the
+        # redundant Brave→CQC lookup — saves an API round-trip per competitor.
+        if competitor.get("cqc_data"):
+            cqc_data = None
+        else:
+            cqc_data = self._lookup_cqc(name)
 
         verified_context = ""
         if cqc_data:

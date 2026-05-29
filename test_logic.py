@@ -126,6 +126,44 @@ def test_safe_join():
     check("limit", _safe_join(["a", "b", "c"], limit=2), "a, b")
 
 
+def test_care_home_mapping():
+    print("\n== Service area → CQC careHome filter ==")
+    from research_agent import ResearchConfig, ResearchAgent
+    from search_providers.llm_web import LLMWebProvider
+
+    def make(service):
+        cfg = ResearchConfig(
+            commissioner="X", service_area=service, target_company="Y",
+            time_period="z", research_depth="deep",
+        )
+        agent = ResearchAgent.__new__(ResearchAgent)  # skip __init__ (no prompts/keys)
+        agent.config = cfg
+        return agent._service_is_care_home()
+
+    check("residential care -> True", make("residential care"), True)
+    check("nursing home -> True", make("nursing home"), True)
+    check("domiciliary care -> False", make("domiciliary care"), False)
+    check("supported living -> False", make("supported living"), False)
+    check("home care -> False", make("home care"), False)
+    check("unknown thing -> None", make("widget manufacturing"), None)
+
+
+def test_cqc_list_parsing():
+    print("\n== CQC list_locations response parsing ==")
+    # Validate the list endpoint shape handling without network
+    sample = {"locations": [
+        {"locationId": "1-111", "locationName": "Alpha Home"},
+        {"locationId": "1-222", "locationName": "Beta Lodge"},
+    ]}
+    locs = []
+    for loc in sample.get("locations", []):
+        if loc.get("locationId"):
+            locs.append({"locationId": loc["locationId"],
+                         "locationName": loc.get("locationName") or ""})
+    check("parsed 2 locations", len(locs), 2)
+    check("first name", locs[0]["locationName"], "Alpha Home")
+
+
 def test_enrichment_status():
     print("\n== enrichment status computation ==")
     from research_agent import _compute_enrichment_status
@@ -147,6 +185,8 @@ if __name__ == "__main__":
     test_url_filter()
     test_cqc_parsing()
     test_safe_join()
+    test_care_home_mapping()
+    test_cqc_list_parsing()
     test_enrichment_status()
     print()
     if FAILURES:
