@@ -86,6 +86,10 @@ class ResearchAgent:
         self._drilldown_template = self.DRILLDOWN_PATH.read_text(encoding="utf-8")
         self._target_profile_template = self.TARGET_PROFILE_PATH.read_text(encoding="utf-8")
 
+        # Area context learned from the target's CQC record, used to
+        # disambiguate same-named competitors in other towns.
+        self._target_local_authority = ""
+
         # Initialise authoritative data source clients if keys present
         self.cqc = None
         self.brave = None
@@ -259,52 +263,86 @@ class ResearchAgent:
 
     CQC_MATCH_THRESHOLD = 0.6
 
+    def _expected_area_tokens(self) -> set:
+        """Tokens describing the target area, for CQC record disambiguation."""
+        cfg = self.config
+        text = " ".join([
+            cfg.geographic_area or "",
+            cfg.commissioner or "",
+            self._target_local_authority or "",
+        ]).lower()
+        # Drop generic council words so "southend" survives but "council" doesn't
+        text = re.sub(r"\b(city|council|borough|county|district|metropolitan|"
+                      r"unitary|authority|icb|nhs|of|and|the)\b", " ", text)
+        return {t for t in re.split(r"[^a-z]+", text) if len(t) >= 4}
+
     def _lookup_cqc(self, provider_name: str, status_callback: StatusCallback = _noop) -> Optional[Dict[str, Any]]:
         """
         Find a CQC profile for a named provider, using Brave to surface
-        candidate URLs and a name-similarity check to disambiguate.
+        candidate URLs, a name-similarity check, and a geographic check to
+        avoid attaching a same-named provider from a different town.
         Only returns data when confidence >= CQC_MATCH_THRESHOLD.
         """
         if not (self.brave and self.cqc):
             return None
         try:
             results = self.brave.search(f'site:cqc.org.uk "{provider_name}"', count=8)
-            best = None
-            best_score = 0.0
-            best_candidate = ""
+            expected = self._expected_area_tokens()
+
+            # Score every valid candidate by name confidence + area preference.
+            # Area is used to PICK among similarly-named candidates (e.g. the
+            # right "Victoria Court"), NOT to hard-reject — so a legitimate
+            # provider registered in a neighbouring district is still kept.
+            candidates = []
             for r in results:
                 url = r.get("url", "") or ""
                 title = r.get("title", "") or ""
-                if "cqc.org.uk" not in url:
+                if "cqc.org.uk" not in url or not self.cqc.extract_id_from_url(url):
                     continue
-                if not self.cqc.extract_id_from_url(url):
-                    continue
-                # Title format: "Provider Name - <Provider|Location> | Care Quality Commission ..."
                 candidate_name = title.split(" - ")[0].split(" | ")[0].strip()
-                score = _name_match_confidence(provider_name, candidate_name)
-                if score > best_score:
-                    best_score = score
-                    best = r
-                    best_candidate = candidate_name
+                name_score = _name_match_confidence(provider_name, candidate_name)
+                if name_score < self.CQC_MATCH_THRESHOLD:
+                    continue
+                # Does the Brave title/snippet/url hint at the target area?
+                hint_text = f"{title} {r.get('description', '')} {url}".lower()
+                hint_tokens = {t for t in re.split(r"[^a-z]+", hint_text) if len(t) >= 4}
+                area_bonus = 0.15 if (expected and not expected.isdisjoint(hint_tokens)) else 0.0
+                candidates.append((name_score + area_bonus, name_score, r, candidate_name))
 
-            if not best or best_score < self.CQC_MATCH_THRESHOLD:
-                status_callback(
-                    f"    ⚠️ CQC: no confident match for **{provider_name}** "
-                    f"(best candidate '{best_candidate}' scored {best_score:.2f}, threshold {self.CQC_MATCH_THRESHOLD})"
-                )
+            if not candidates:
+                status_callback(f"    ⚠️ CQC: no confident name match for **{provider_name}**")
                 return None
 
-            cqc_url = best.get("url", "")
-            raw = self.cqc.fetch_from_url(cqc_url)
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            _, best_score, best, best_candidate = candidates[0]
+
+            raw = self.cqc.fetch_from_url(best.get("url", ""))
             if not raw:
                 return None
             summary = self.cqc.summarise_provider_profile(raw)
+
+            # Soft area verification: flag (don't drop) records outside the area.
+            area_verified = True
+            if expected:
+                record_area = " ".join([
+                    summary.get("local_authority", ""), summary.get("region", ""),
+                    summary.get("town", ""), summary.get("postcode", ""),
+                ]).lower()
+                record_tokens = {t for t in re.split(r"[^a-z]+", record_area) if len(t) >= 4}
+                if record_tokens and expected.isdisjoint(record_tokens):
+                    area_verified = False
+
             summary["_brave_snippet"] = best.get("description", "")
             summary["_match_confidence"] = round(best_score, 2)
             summary["_matched_name"] = best_candidate
+            summary["_area_verified"] = area_verified
+
+            beds = summary.get("number_of_beds")
+            beds_str = f", {beds} beds" if beds else ""
+            area_note = "" if area_verified else f" ⚠️ in {summary.get('local_authority') or 'other area'}"
             status_callback(
-                f"    ✅ CQC verified: **{provider_name}** → '{best_candidate}' → "
-                f"{summary.get('overall_rating', 'Unknown')} (confidence {best_score:.2f})"
+                f"    ✅ CQC: **{provider_name}** → '{best_candidate}' → "
+                f"{summary.get('overall_rating', 'Unknown')}{beds_str} (conf {best_score:.2f}){area_note}"
             )
             return summary
         except Exception as exc:
@@ -318,8 +356,13 @@ class ResearchAgent:
     def _research_target_profile(self, status_callback: StatusCallback = _noop) -> Dict[str, Any]:
         cfg = self.config
 
-        # First — try authoritative CQC lookup if API keys configured
+        # First — try authoritative CQC lookup if API keys configured.
+        # (Don't yet know the LA, so disambiguation uses commissioner/geo only.)
         cqc_data = self._lookup_cqc(cfg.target_company, status_callback)
+
+        # Learn the target's local authority so we can disambiguate competitors
+        if cqc_data and cqc_data.get("local_authority"):
+            self._target_local_authority = cqc_data["local_authority"]
 
         # Build context to pass to the LLM about what we already verified
         verified_context = ""
@@ -330,8 +373,12 @@ class ResearchAgent:
                 f"Last Inspection: {cqc_data.get('last_inspection_date', 'Unknown')}\n"
                 f"CQC Profile URL: {cqc_data.get('cqc_url', '')}\n"
                 f"Registration Status: {cqc_data.get('registration_status', '')}\n"
+                f"Registration Date: {cqc_data.get('registration_date', '')}\n"
+                f"Number of Beds: {cqc_data.get('number_of_beds', 'Unknown')}\n"
                 f"Address: {cqc_data.get('address', '')}\n"
                 f"Local Authority: {cqc_data.get('local_authority', '')}\n"
+                f"Service Types: {cqc_data.get('service_types', [])}\n"
+                f"Specialisms: {cqc_data.get('specialisms', [])}\n"
                 f"Sub-ratings: {cqc_data.get('sub_ratings', {})}\n"
             )
 
@@ -355,9 +402,14 @@ class ResearchAgent:
             data["cqc"] = {
                 "rating": cqc_data.get("overall_rating", "Unknown"),
                 "last_inspection_date": cqc_data.get("last_inspection_date", "Unknown"),
+                "registration_date": cqc_data.get("registration_date", ""),
+                "number_of_beds": cqc_data.get("number_of_beds"),
                 "provider_id": cqc_data.get("provider_id", ""),
                 "profile_url": cqc_data.get("cqc_url", ""),
                 "sub_ratings": cqc_data.get("sub_ratings", {}),
+                "service_types": cqc_data.get("service_types", []),
+                "specialisms": cqc_data.get("specialisms", []),
+                "local_authority": cqc_data.get("local_authority", ""),
                 "registered_locations": [{
                     "name": cqc_data.get("name", ""),
                     "rating": cqc_data.get("overall_rating", "Unknown"),
@@ -365,10 +417,11 @@ class ResearchAgent:
                 }],
                 "verified_source": "CQC Syndication API",
             }
-            # If CQC includes a website and we don't have one yet, use it
-            if cqc_data.get("website") and not data.get("official_website") or data.get("official_website") in ("Unknown", ""):
-                if cqc_data.get("website"):
-                    data["official_website"] = cqc_data["website"]
+            # If CQC includes a website and we don't have a good one yet, use it
+            cqc_site = cqc_data.get("website")
+            current_site = data.get("official_website")
+            if cqc_site and (not current_site or current_site in ("Unknown", "")):
+                data["official_website"] = cqc_site
             # Ensure lookup_status reflects authoritative data
             ls = data.get("lookup_status", {})
             ls["cqc_found"] = True
@@ -527,6 +580,17 @@ class ResearchAgent:
             merged["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
             merged["cqc_profile_url"] = cqc_data.get("cqc_url", "")
             merged["cqc_verified"] = True
+            # Store the rich CQC structured data for benchmarking + dashboard
+            merged["cqc_data"] = {
+                "sub_ratings": cqc_data.get("sub_ratings", {}),
+                "number_of_beds": cqc_data.get("number_of_beds"),
+                "registration_date": cqc_data.get("registration_date", ""),
+                "last_inspection_date": cqc_data.get("last_inspection_date", ""),
+                "service_types": cqc_data.get("service_types", []),
+                "specialisms": cqc_data.get("specialisms", []),
+                "local_authority": cqc_data.get("local_authority", ""),
+                "town": cqc_data.get("town", ""),
+            }
             # If CQC has a website and we don't already have one, use it
             existing_site = merged.get("website") or ""
             if cqc_data.get("website") and existing_site in ("", None, "Unknown"):

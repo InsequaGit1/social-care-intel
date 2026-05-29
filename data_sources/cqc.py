@@ -91,23 +91,53 @@ class CQCClient:
     def summarise_provider_profile(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Reduce a raw CQC payload (provider or location) to the fields the
-        research pipeline cares about: overall rating, key dates, locations.
+        research pipeline cares about. Pulls the rich structured data CQC
+        provides — sub-ratings, beds, registration date, service types,
+        specialisms — so benchmarking can be grounded in real facts rather
+        than LLM guesses from thin websites.
         """
         if not data:
             return {}
 
-        # Both location and provider payloads include `currentRatings`
         current = data.get("currentRatings") or {}
-        overall = (current.get("overall") or {}).get("rating", "Unknown")
+        overall_obj = current.get("overall") or {}
+        overall = overall_obj.get("rating", "Unknown")
 
-        # Location-level inspection date
+        # Inspection / report date
         last_inspection = data.get("lastInspection", {}) or {}
-        inspection_date = last_inspection.get("date") or data.get("lastReport", {}).get("publicationDate")
+        inspection_date = (
+            last_inspection.get("date")
+            or overall_obj.get("reportDate")
+            or (data.get("lastReport", {}) or {}).get("publicationDate")
+        )
 
-        # The CQC API includes a website field on locations (and sometimes providers)
-        # — extract it so we don't rely on the LLM finding it.
         website = data.get("website") or ""
         phone = data.get("phoneNumber") or ""
+
+        # --- Sub-ratings (correct path: currentRatings.overall.keyQuestionRatings[]) ---
+        sub_ratings = {}
+        for kq in (overall_obj.get("keyQuestionRatings") or []):
+            name = (kq.get("name") or "").strip()
+            rating = kq.get("rating")
+            if name and rating:
+                sub_ratings[name] = rating
+
+        # --- Service types, specialisms, regulated activities ---
+        service_types = [
+            (st.get("name") or "").strip()
+            for st in (data.get("gacServiceTypes") or [])
+            if st.get("name")
+        ]
+        specialisms = [
+            (sp.get("name") or "").strip()
+            for sp in (data.get("specialisms") or [])
+            if sp.get("name")
+        ]
+        regulated_activities = [
+            (ra.get("name") or "").strip()
+            for ra in (data.get("regulatedActivities") or [])
+            if ra.get("name")
+        ]
 
         result = {
             "provider_id": data.get("providerId") or "",
@@ -117,6 +147,7 @@ class CQCClient:
             "last_inspection_date": inspection_date or "Unknown",
             "registration_status": data.get("registrationStatus") or "",
             "registration_date": data.get("registrationDate") or "",
+            "number_of_beds": data.get("numberOfBeds"),
             "website": website,
             "phone": phone,
             "address": ", ".join(filter(None, [
@@ -125,24 +156,66 @@ class CQCClient:
                 str(data.get("postalAddressTownCity") or ""),
                 str(data.get("postalCode") or ""),
             ])),
+            "town": data.get("postalAddressTownCity") or "",
+            "postcode": data.get("postalCode") or "",
             "region": data.get("region") or "",
             "local_authority": data.get("localAuthority") or "",
             "type": data.get("type") or "",
-            "registered_manager": (data.get("relationships") or [{}])[0].get("relatedLocationId", "") if data.get("relationships") else "",
+            "service_types": service_types,
+            "specialisms": specialisms,
+            "regulated_activities": regulated_activities,
             "cqc_url": data.get("_cqc_url", ""),
             "lookup_type": data.get("_lookup_type", ""),
         }
-
-        # Sub-ratings if present (Safe, Effective, Caring, Responsive, Well-led)
-        sub_ratings = {}
-        for key in ("safe", "effective", "caring", "responsive", "wellLed"):
-            band = (current.get(key) or {}).get("rating")
-            if band:
-                sub_ratings[key] = band
         if sub_ratings:
             result["sub_ratings"] = sub_ratings
 
         return result
+
+    # ------------------------------------------------------------------
+    # Area-based discovery — authoritative local market map
+    # ------------------------------------------------------------------
+
+    def list_locations(
+        self,
+        local_authority: str = "",
+        region: str = "",
+        care_home: Optional[bool] = None,
+        per_page: int = 100,
+        max_pages: int = 1,
+    ) -> List[Dict[str, str]]:
+        """
+        List CQC locations filtered by local authority / region.
+        Returns a list of {locationId, locationName}. This is the authoritative
+        list of registered providers in an area — no LLM guessing.
+        """
+        params: Dict[str, Any] = {"perPage": per_page, "page": 1}
+        if local_authority:
+            params["localAuthority"] = local_authority
+        if region:
+            params["region"] = region
+        if care_home is not None:
+            params["careHome"] = "Y" if care_home else "N"
+
+        locations: List[Dict[str, str]] = []
+        for page in range(1, max_pages + 1):
+            params["page"] = page
+            data = self._get("/locations", params=params)
+            if not data:
+                break
+            batch = data.get("locations") or []
+            if not batch:
+                break
+            for loc in batch:
+                lid = loc.get("locationId")
+                if lid:
+                    locations.append({
+                        "locationId": lid,
+                        "locationName": loc.get("locationName") or loc.get("name") or "",
+                    })
+            if len(batch) < per_page:
+                break
+        return locations
 
     # ------------------------------------------------------------------
     # HTTP helper

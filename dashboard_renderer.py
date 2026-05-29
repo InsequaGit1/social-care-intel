@@ -321,16 +321,19 @@ class DashboardRenderer:
             st.warning("No competitors were identified. Broaden your geographic area or add known competitors manually.")
             return
 
-        # Summary table
+        # Summary table — now includes authoritative CQC structured data
         rows = []
         for c in competitors:
+            cqc = c.get("cqc_data", {}) or {}
+            beds = cqc.get("number_of_beds")
             rows.append({
                 "Company": c.get("name", ""),
-                "Size": c.get("size_description", ""),
                 "CQC Rating": c.get("cqc_rating", "Unknown"),
+                "Beds": beds if beds else "—",
+                "Registered": (cqc.get("registration_date", "") or "")[:4] or "—",
                 "Local Contracts": len(c.get("known_contracts_with_commissioner", [])),
-                "Services": ", ".join(c.get("services", [])[:3]),
-                "Website": c.get("website", ""),
+                "Specialisms": ", ".join(cqc.get("specialisms", [])[:2]) if cqc.get("specialisms") else "—",
+                "Website": c.get("website", "") or "—",
             })
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True, hide_index=True)
@@ -363,10 +366,11 @@ class DashboardRenderer:
                     else:
                         st.markdown(f"**Website:** {website}")
                     st.markdown(f"**Headquarters:** {c.get('headquarters', 'Unknown')}")
-                    st.markdown(f"**Size:** {c.get('size_description', 'Unknown')}")
-                    st.markdown(f"**CQC Rating:** {c.get('cqc_rating', 'Unknown')}")
+                    rating = c.get("cqc_rating", "Unknown")
+                    verified = " ✓" if c.get("cqc_verified") else ""
+                    st.markdown(f"**CQC Rating:** {rating}{verified}", unsafe_allow_html=True)
                     if c.get("cqc_profile_url"):
-                        st.markdown(f"**CQC Profile:** [{c['cqc_profile_url']}]({c['cqc_profile_url']})")
+                        st.markdown(f"**CQC Profile:** [View on cqc.org.uk]({c['cqc_profile_url']})")
                     ch_num = c.get("companies_house_number", "Unknown")
                     ch_url = c.get("companies_house_url", "")
                     if ch_url and ch_url.startswith("http"):
@@ -375,17 +379,30 @@ class DashboardRenderer:
                         st.markdown(f"**Companies House:** {ch_num}")
 
                 with col2:
-                    services = c.get("services", [])
-                    if services:
-                        st.markdown("**Services:**")
-                        for s in services:
-                            st.markdown(f"  - {s}")
+                    # Authoritative CQC structured data
+                    cqc = c.get("cqc_data", {}) or {}
+                    if cqc:
+                        if cqc.get("number_of_beds"):
+                            st.markdown(f"**Registered beds:** {cqc['number_of_beds']}")
+                        if cqc.get("registration_date"):
+                            st.markdown(f"**CQC registered since:** {cqc['registration_date'][:10]}")
+                        if cqc.get("last_inspection_date"):
+                            st.markdown(f"**Last inspection:** {str(cqc['last_inspection_date'])[:10]}")
+                        subs = cqc.get("sub_ratings", {})
+                        if subs:
+                            st.markdown("**CQC sub-ratings:**")
+                            for k, v in subs.items():
+                                st.markdown(f"  - {k}: {v}")
+                        if cqc.get("specialisms"):
+                            st.markdown(f"**Specialisms:** {', '.join(cqc['specialisms'][:6])}")
+                        if cqc.get("service_types"):
+                            st.markdown(f"**Service types:** {', '.join(cqc['service_types'][:4])}")
 
-                    coverage = c.get("geographic_coverage", [])
-                    if coverage:
-                        st.markdown("**Geographic coverage:**")
-                        for area in coverage:
-                            st.markdown(f"  - {area}")
+                    services = c.get("services", [])
+                    if services and not cqc.get("service_types"):
+                        st.markdown("**Services:**")
+                        for s in services[:6]:
+                            st.markdown(f"  - {s}")
 
                 local_contracts = c.get("known_contracts_with_commissioner", [])
                 if local_contracts:

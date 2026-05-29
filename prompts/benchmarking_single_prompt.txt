@@ -65,11 +65,24 @@ Geographic Area: {geographic_area}
    Consider: their CQC rating (passed in the profile), all five scored criteria above,
    and the specific commissioner priorities.
 
+=== USE THE AUTHORITATIVE CQC DATA ===
+If the company profile includes a "AUTHORITATIVE CQC DATA" block, treat those facts as
+ground truth and let them drive your scores (they are far more reliable than website claims):
+- CQC sub-ratings (Safe / Effective / Caring / Responsive / Well-led) should anchor quality_compliance.
+  e.g. all sub-ratings Good/Outstanding → quality_compliance 4-5; any "Inadequate" → 1-2.
+- Registered beds and number of locations indicate scale → inform delivery_strength.
+  e.g. a 60-bed home or multi-site provider has more delivery capacity than a 12-bed single home.
+- CQC registration date indicates track record / establishment → inform local_track_record and delivery_strength.
+  e.g. registered 2005 = long-established; registered 2024 = new entrant.
+- CQC specialisms and service types indicate service fit → inform service_location_fit.
+- CQC local authority confirms geographic proximity → inform service_location_fit.
+
 === STRICT RULES ===
 - Base each score on the evidence provided. Do NOT make up evidence.
 - If there is no public evidence for a criterion, score 1–2 and justify with "No reliable public source found".
-- local_track_record: score 3+ ONLY if there are named contracts or framework memberships with this specific commissioner. Generic geographic presence does not justify 3+.
+- local_track_record: score 3+ ONLY if there are named contracts/frameworks with this commissioner, OR long CQC establishment in the exact area. Generic geographic presence alone justifies at most 2.
 - strategic_differentiators: score 3+ ONLY if there is specific cited evidence (named partnerships, named digital tools, named social value programmes). Generic claims do not qualify.
+- delivery_strength: use registered beds / number of locations / registration date where available rather than guessing.
 - If a score relies on inference rather than cited evidence, set analyst_inference: true.
 
 === OUTPUT FORMAT ===

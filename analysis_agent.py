@@ -115,12 +115,23 @@ class AnalysisAgent:
         # ---- Benchmarking (per-company) ------------------------------
         # Hydrate the target company row with verified target_profile data if present
         target_profile = research_results.get("target_profile", {}) or {}
+        target_cqc = target_profile.get("cqc", {}) or {}
         target_row = {
             "name": cfg.target_company,
             "is_target": True,
             "website": target_profile.get("official_website", cfg.target_website or "Unknown"),
-            "cqc_rating": (target_profile.get("cqc", {}) or {}).get("rating", "Unknown"),
-            "cqc_profile_url": (target_profile.get("cqc", {}) or {}).get("profile_url", ""),
+            "cqc_rating": target_cqc.get("rating", "Unknown"),
+            "cqc_profile_url": target_cqc.get("profile_url", ""),
+            "cqc_verified": target_cqc.get("verified_source") == "CQC Syndication API",
+            "cqc_data": {
+                "sub_ratings": target_cqc.get("sub_ratings", {}),
+                "number_of_beds": target_cqc.get("number_of_beds"),
+                "registration_date": target_cqc.get("registration_date", ""),
+                "last_inspection_date": target_cqc.get("last_inspection_date", ""),
+                "service_types": target_cqc.get("service_types", []),
+                "specialisms": target_cqc.get("specialisms", []),
+                "local_authority": target_cqc.get("local_authority", ""),
+            },
             "companies_house_number": (target_profile.get("companies_house", {}) or {}).get("number", "Unknown"),
             "known_contracts_with_commissioner": target_profile.get("contracts_with_commissioner", []),
             "selection_rationale": "Target bidding company for this opportunity.",
@@ -128,7 +139,7 @@ class AnalysisAgent:
         all_companies = [target_row] + [
             {**c, "is_target": False} for c in companies_to_analyse
         ]
-        status_callback(f"  📊 Scoring {len(all_companies)} companies across 14 criteria (one call per company)…")
+        status_callback(f"  📊 Scoring {len(all_companies)} companies across {len(self.SCORED_CRITERIA)} criteria + CQC rating (one call per company)…")
         bench_data = self._benchmark(
             all_companies=all_companies,
             research_results=research_results,
@@ -280,6 +291,27 @@ class AnalysisAgent:
             f"Known contracts with commissioner: {company.get('known_contracts_with_commissioner', [])}",
             f"Selection rationale: {company.get('selection_rationale', 'N/A')}",
         ]
+
+        # Authoritative CQC structured data — ground scores in real facts
+        cqc = company.get("cqc_data", {}) or {}
+        if cqc:
+            profile_parts.append("--- AUTHORITATIVE CQC DATA (objective facts, prefer over website claims) ---")
+            if cqc.get("sub_ratings"):
+                subs = ", ".join(f"{k}: {v}" for k, v in cqc["sub_ratings"].items())
+                profile_parts.append(f"CQC sub-ratings: {subs}")
+            if cqc.get("number_of_beds"):
+                profile_parts.append(f"Registered beds: {cqc['number_of_beds']}")
+            if cqc.get("registration_date"):
+                profile_parts.append(f"CQC registration date (track record): {cqc['registration_date']}")
+            if cqc.get("last_inspection_date"):
+                profile_parts.append(f"Last CQC inspection: {cqc['last_inspection_date']}")
+            if cqc.get("service_types"):
+                profile_parts.append(f"CQC service types: {_safe_join(cqc['service_types'])}")
+            if cqc.get("specialisms"):
+                profile_parts.append(f"CQC specialisms: {_safe_join(cqc['specialisms'])}")
+            if cqc.get("local_authority"):
+                profile_parts.append(f"CQC local authority: {cqc['local_authority']}")
+
         if website_analysis and website_analysis.get("accessible", True):
             ev = website_analysis.get("evidence_quality", {})
             profile_parts.append(f"Evidence quality from website: {ev.get('overall_evidence_quality', 'Unknown')}")
