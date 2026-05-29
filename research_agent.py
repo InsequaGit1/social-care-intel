@@ -115,36 +115,40 @@ class ResearchAgent:
 
         geo_label = cfg.geographic_area or "(area to be inferred from commissioner)"
 
-        # ---- Phase 0a (Deep only): Dedicated TARGET company profile lookup ----
-        target_profile: Dict[str, Any] = {}
-        if not cfg.is_quick:
-            status_callback(f"  🎯 Building verified profile for target: **{cfg.target_company}**…")
-            target_profile = self._research_target_profile(status_callback)
-            cqc_rating = target_profile.get("cqc", {}).get("rating", "Unknown")
-            ch_number = target_profile.get("companies_house", {}).get("number", "Unknown")
-            status_callback(f"    Target CQC rating: {cqc_rating} · Companies House: {ch_number}")
+        # ---- Phase 0a (BOTH modes): Verified TARGET company profile ----
+        # Cheap and authoritative (CQC + Companies House + website). Always worth it.
+        status_callback(f"  🎯 Building verified profile for target: **{cfg.target_company}**…")
+        target_profile = self._research_target_profile(status_callback)
+        cqc_rating = (target_profile.get("cqc", {}) or {}).get("rating", "Unknown")
+        ch_number = (target_profile.get("companies_house", {}) or {}).get("number", "Unknown")
+        status_callback(f"    Target CQC rating: {cqc_rating} · Companies House: {ch_number}")
 
-        # ---- Phase 0b (Deep only): Competitor discovery ----
-        # Primary: authoritative CQC area list (every registered provider in
-        # the target's local authority). Supplement: LLM discovery for
-        # contract/framework players CQC wouldn't surface.
+        # ---- Phase 0b: Competitor discovery ----
+        # CQC area discovery (API-only, authoritative) runs in BOTH modes.
+        # LLM discovery (an extra web-search call) is Deep-only.
         discovered_competitors: List[Dict] = []
         discovery_method = "none"
-        if not cfg.is_quick:
-            cqc_found: List[Dict] = []
-            if self.cqc and self._target_local_authority:
-                cqc_found = self._discover_competitors_cqc(status_callback)
+        cqc_found: List[Dict] = []
+        if self.cqc and self._target_local_authority:
+            cqc_found = self._discover_competitors_cqc(status_callback)
 
+        llm_found: List[Dict] = []
+        if not cfg.is_quick:
             status_callback(f"  🔍 LLM discovery for **{cfg.service_area}** in **{geo_label}**…")
             llm_found = self._discover_competitors(status_callback)
 
-            # CQC-found take priority (authoritative + already carry CQC data)
-            discovered_competitors = _merge_competitors(cqc_found, llm_found)
-            discovery_method = "cqc+llm" if cqc_found else "llm"
-            status_callback(
-                f"    Discovery: {len(cqc_found)} from CQC area list + {len(llm_found)} from LLM "
-                f"→ {len(discovered_competitors)} unique"
-            )
+        # CQC-found take priority (authoritative + already carry CQC data)
+        discovered_competitors = _merge_competitors(cqc_found, llm_found)
+        if cqc_found and llm_found:
+            discovery_method = "cqc+llm"
+        elif cqc_found:
+            discovery_method = "cqc"
+        elif llm_found:
+            discovery_method = "llm"
+        status_callback(
+            f"    Discovery: {len(cqc_found)} from CQC area list + {len(llm_found)} from LLM "
+            f"→ {len(discovered_competitors)} unique"
+        )
 
         # ---- Phase 1: Master research (procurement + priorities + competitors) ----
         status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
@@ -212,9 +216,20 @@ class ResearchAgent:
                         })
             competitors = competitors[: cfg.max_competitors]
 
-        # ---- Phase 2 (Deep only): Enrich each competitor with targeted searches ----
+        # ---- Phase 2a (BOTH modes): attach authoritative CQC data ----
+        # Cheap CQC lookup (API only, no LLM) for any competitor that doesn't
+        # already carry CQC data from the area-discovery step. This is what
+        # makes Quick Scan genuinely useful: real ratings, beds, specialisms.
+        if competitors and self.cqc and self.brave:
+            need = [c for c in competitors if not c.get("cqc_data")]
+            if need:
+                status_callback(f"  🏷 Attaching CQC data to {len(need)} competitor(s)…")
+                for comp in need:
+                    self._attach_cqc_only(comp, status_callback)
+
+        # ---- Phase 2b (Deep only): LLM enrichment (Companies House, contracts) ----
         if not cfg.is_quick and competitors:
-            status_callback(f"  🔎 Deep enrichment: running targeted searches on {len(competitors)} competitors…")
+            status_callback(f"  🔎 Deep enrichment: Companies House + contracts on {len(competitors)} competitors…")
             enriched = []
             for i, comp in enumerate(competitors, 1):
                 name = comp.get("name", "Unknown")
@@ -245,6 +260,12 @@ class ResearchAgent:
                         sources.append({"url": url, "title": f"{name} enrichment", "used_for": "Competitor enrichment"})
             competitors = enriched
             sources = sources[: cfg.max_sources]
+
+        # Ensure every competitor carries an enrichment_status (Quick mode
+        # skips Phase 2b, so stamp from whatever data we have).
+        for comp in competitors:
+            if "enrichment_status" not in comp:
+                comp["enrichment_status"] = _compute_enrichment_status(comp, {})
 
         output = {
             "metadata": {
@@ -639,12 +660,39 @@ class ResearchAgent:
     # Per-competitor enrichment (Deep Scan only)
     # ------------------------------------------------------------------
 
+    def _attach_cqc_only(self, comp: Dict[str, Any], status_callback: StatusCallback = _noop) -> Dict[str, Any]:
+        """
+        Cheap CQC-only enrichment (no LLM call): look up the competitor's CQC
+        record and attach rating + structured data. Used in both Quick and Deep.
+        """
+        if comp.get("cqc_data"):
+            return comp
+        cqc_data = self._lookup_cqc(comp.get("name", ""), status_callback)
+        if cqc_data:
+            comp["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
+            comp["cqc_profile_url"] = cqc_data.get("cqc_url", "")
+            comp["cqc_verified"] = True
+            comp["cqc_data"] = {
+                "sub_ratings": cqc_data.get("sub_ratings", {}),
+                "number_of_beds": cqc_data.get("number_of_beds"),
+                "registration_date": cqc_data.get("registration_date", ""),
+                "last_inspection_date": cqc_data.get("last_inspection_date", ""),
+                "service_types": cqc_data.get("service_types", []),
+                "specialisms": cqc_data.get("specialisms", []),
+                "local_authority": cqc_data.get("local_authority", ""),
+                "town": cqc_data.get("town", ""),
+            }
+            site = comp.get("website") or ""
+            if cqc_data.get("website") and site in ("", "Unknown", None):
+                comp["website"] = cqc_data["website"]
+        return comp
+
     def _enrich_competitor(self, competitor: Dict[str, Any]) -> Dict[str, Any]:
         cfg = self.config
         name = competitor.get("name", "")
 
-        # If CQC data is already attached (from CQC area discovery), skip the
-        # redundant Brave→CQC lookup — saves an API round-trip per competitor.
+        # If CQC data is already attached (from CQC area discovery or Phase 2a),
+        # skip the redundant Brave→CQC lookup — saves an API round-trip.
         if competitor.get("cqc_data"):
             cqc_data = None
         else:

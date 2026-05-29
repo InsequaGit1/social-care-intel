@@ -97,20 +97,26 @@ class AnalysisAgent:
         )
         website_analyses[cfg.target_company] = target_analysis
 
-        for company in companies_to_analyse:
-            name = company.get("name", "Unknown")
-            url = company.get("website") or ""
-            url = url.strip() if isinstance(url, str) else ""
-            if not url or url in ("Unknown", "None", "null"):
-                status_callback(f"  ⏭ Skipping website analysis for **{name}** — no website on file")
-                website_analyses[name] = _empty_analysis(name, url, error="No website found in CQC profile or web search")
-                continue
-            if not url.startswith(("http://", "https://")):
-                url = "https://" + url
+        # Competitor website analysis is an LLM call each — Deep Scan only.
+        # Quick Scan relies on authoritative CQC structured data for competitors.
+        if cfg.is_quick:
+            status_callback("  ⏭ Quick Scan: skipping competitor website analysis "
+                            "(benchmarking uses authoritative CQC data instead)")
+        else:
+            for company in companies_to_analyse:
+                name = company.get("name", "Unknown")
+                url = company.get("website") or ""
+                url = url.strip() if isinstance(url, str) else ""
+                if not url or url in ("Unknown", "None", "null"):
+                    status_callback(f"  ⏭ Skipping website analysis for **{name}** — no website on file")
+                    website_analyses[name] = _empty_analysis(name, url, error="No website found in CQC profile or web search")
+                    continue
+                if not url.startswith(("http://", "https://")):
+                    url = "https://" + url
 
-            status_callback(f"  Analysing website: **{name}** ({url})…")
-            analysis = self._analyse_website(company_name=name, website_url=url)
-            website_analyses[name] = analysis
+                status_callback(f"  Analysing website: **{name}** ({url})…")
+                analysis = self._analyse_website(company_name=name, website_url=url)
+                website_analyses[name] = analysis
 
         # ---- Benchmarking (per-company) ------------------------------
         # Hydrate the target company row with verified target_profile data if present

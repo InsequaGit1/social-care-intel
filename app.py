@@ -155,13 +155,14 @@ def _show_input_form():
                 "Research Depth",
                 options=["Quick Scan", "Deeper Scan"],
                 help=(
-                    "**Quick Scan** — typically 2–5 minutes. "
-                    "Single broad research call. Up to 5 competitors, 12 sources, 3 procurement notices. "
-                    "Some fields may come back 'Unknown'.\n\n"
+                    "**Quick Scan** — typically 3–6 minutes. "
+                    "Authoritative CQC market map: target profile, real local providers "
+                    "with verified CQC ratings/beds/specialisms, procurement notices, and "
+                    "benchmarking on CQC data. Up to 5 competitors.\n\n"
                     "**Deeper Scan** — typically 10–25 minutes. "
-                    "Broad research PLUS a targeted enrichment search per competitor "
-                    "(website, CQC rating, Companies House, contract history). "
-                    "Up to 10 competitors, 30 sources, 8 procurement notices."
+                    "Everything in Quick PLUS competitor website analysis, Companies House + "
+                    "contract enrichment per competitor, procurement provider drill-down, and "
+                    "LLM-based discovery of framework/contract players. Up to 10 competitors."
                 ),
             )
 
