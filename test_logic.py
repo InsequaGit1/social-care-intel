@@ -166,6 +166,7 @@ def test_care_home_mapping():
         )
         agent = ResearchAgent.__new__(ResearchAgent)  # skip __init__ (no prompts/keys)
         agent.config = cfg
+        agent._target_service_types = []  # no target lookup in this unit test
         return agent._service_is_care_home()
 
     check("residential care -> True", make("residential care"), True)

@@ -631,7 +631,7 @@ class ResearchAgent:
         service area only when the target's types are unknown. None = ambiguous.
         """
         # 1. Authoritative: the target's own CQC classification
-        if self._target_service_types:
+        if getattr(self, "_target_service_types", None):
             joined = " ".join(self._target_service_types).lower()
             if "care home" in joined or "nursing" in joined:
                 return True
