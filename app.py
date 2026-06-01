@@ -111,16 +111,12 @@ def _show_input_form():
                 "Commissioner / Local Authority / ICB *",
                 placeholder="e.g. Birmingham City Council",
             )
-            service_area = st.text_input(
-                "Service Area *",
-                placeholder="e.g. Domiciliary care — adults with learning disabilities",
-            )
-
-        with c2:
             target_company = st.text_input(
                 "Target Company Name *",
                 placeholder="e.g. Acorn Care Services Ltd",
             )
+
+        with c2:
             time_period = st.text_input(
                 "Time Period to Review *",
                 placeholder="e.g. Last 3 years (2022–2025)",
@@ -131,6 +127,10 @@ def _show_input_form():
         c3, c4 = st.columns(2)
 
         with c3:
+            service_area = st.text_input(
+                "Service Area",
+                placeholder="e.g. domiciliary care — inferred from the target's CQC registration if blank",
+            )
             target_website = st.text_input(
                 "Target Company Website",
                 placeholder="e.g. https://www.acorncare.co.uk — found automatically if blank",
@@ -378,7 +378,6 @@ def _validate_form(**kwargs) -> list:
     required = {
         "target_company": "Target company name",
         "commissioner": "Commissioner / local authority",
-        "service_area": "Service area",
         "time_period": "Time period",
     }
     for field, label in required.items():

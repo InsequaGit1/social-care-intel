@@ -43,6 +43,12 @@ class ResearchConfig:
         return self.research_depth == "quick"
 
     @property
+    def service_area_label(self) -> str:
+        """Service area for prompts; sensible default when the user leaves it blank
+        (the target's CQC service types drive competitor filtering regardless)."""
+        return self.service_area or "social care services (infer from the target company's CQC registration)"
+
+    @property
     def max_competitors(self) -> int:
         return 5 if self.is_quick else 10
 
@@ -537,7 +543,7 @@ class ResearchAgent:
             target_company=cfg.target_company,
             target_website=cfg.target_website or "Not provided — search for it",
             commissioner=cfg.commissioner,
-            service_area=cfg.service_area,
+            service_area=cfg.service_area_label,
             geographic_area=cfg.geographic_area or "Not specified",
         ) + verified_context
 
@@ -824,7 +830,7 @@ class ResearchAgent:
         prompt = _fill_template(self._discovery_template,
             commissioner=cfg.commissioner,
             commissioner_domain=commissioner_domain,
-            service_area=cfg.service_area,
+            service_area=cfg.service_area_label,
             geographic_area=cfg.geographic_area or "the commissioner's area",
             time_period=cfg.time_period,
             known_competitors=known,
@@ -941,7 +947,7 @@ class ResearchAgent:
             company_name=name,
             current_profile=current_profile,
             commissioner=cfg.commissioner,
-            service_area=cfg.service_area,
+            service_area=cfg.service_area_label,
             geographic_area=cfg.geographic_area or "Unknown",
         )
 
@@ -1010,7 +1016,7 @@ class ResearchAgent:
 
         return _fill_template(self._prompt_template,
             commissioner=cfg.commissioner,
-            service_area=cfg.service_area,
+            service_area=cfg.service_area_label,
             target_company=cfg.target_company,
             target_website=cfg.target_website or "Not provided — please find it",
             geographic_area=cfg.geographic_area or "Not provided — infer from commissioner area",
