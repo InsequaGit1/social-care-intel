@@ -63,9 +63,17 @@ PROVIDERS = {
         "note": "Uses Google Search grounding via the google-genai SDK.",
     },
     "Claude": {
-        "models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+        # Sonnet 4.6 first = sensible cost/quality default for a high-call-volume
+        # tool (a Deep Scan makes 30+ model calls). Opus for max quality, Haiku
+        # for cheapest. IDs per Anthropic's dateless 4.6-generation scheme.
+        "models": [
+            "claude-sonnet-4-6",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-haiku-4-5-20251001",
+        ],
         "env_var": "ANTHROPIC_API_KEY",
-        "note": "Uses the web_search_20250305 built-in tool.",
+        "note": "Uses the server-side web_search tool. Sonnet = balanced default; Opus = top quality; Haiku = cheapest.",
     },
 }
 
