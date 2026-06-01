@@ -86,9 +86,11 @@ class ResearchAgent:
         self._drilldown_template = self.DRILLDOWN_PATH.read_text(encoding="utf-8")
         self._target_profile_template = self.TARGET_PROFILE_PATH.read_text(encoding="utf-8")
 
-        # Area context learned from the target's CQC record, used to
-        # disambiguate same-named competitors in other towns.
+        # Area + service context learned from the target's CQC record, used to
+        # disambiguate competitors and filter the area list to like-for-like
+        # service types (CQC's own classification, not the user's free text).
         self._target_local_authority = ""
+        self._target_service_types: List[str] = []
 
         # Initialise authoritative data source clients if keys present
         self.cqc = None
@@ -408,6 +410,7 @@ class ResearchAgent:
             if not raw:
                 return None
             summary = self.cqc.summarise_provider_profile(raw)
+            summary = self._augment_rating(summary)  # provider-level rating fallback
 
             # Area verification.
             area_verified = True
@@ -505,9 +508,12 @@ class ResearchAgent:
         cqc_data = self._lookup_cqc(cfg.target_company, status_callback,
                                     allow_fuzzy=True, strict_area=True)
 
-        # Learn the target's local authority so we can disambiguate competitors
+        # Learn the target's local authority + service types from its CQC record
         if cqc_data and cqc_data.get("local_authority"):
             self._target_local_authority = cqc_data["local_authority"]
+        if cqc_data and cqc_data.get("service_types"):
+            self._target_service_types = list(cqc_data["service_types"])
+            status_callback(f"    Target CQC service types: {', '.join(self._target_service_types)}")
 
         # Build context to pass to the LLM about what we already verified
         verified_context = ""
@@ -604,10 +610,38 @@ class ResearchAgent:
     # ------------------------------------------------------------------
 
     _RATING_RANK = {"Outstanding": 4, "Good": 3, "Requires improvement": 2, "Inadequate": 1}
-    CQC_DETAIL_CAP = 30  # max location detail fetches (bounds runtime)
+    CQC_DETAIL_CAP = 60  # max location detail fetches (higher because we filter by service type)
+
+    # CQC service types that count as in-scope social-care competitors.
+    _SOCIAL_CARE_HINTS = (
+        "homecare", "domiciliary", "supported living", "care home", "nursing",
+        "extra care", "shared lives", "personal care", "hospice", "rehabilitation",
+    )
+    # Clinical/medical CQC service types to exclude (GPs, dentists, hospitals…).
+    _CLINICAL_EXCLUDE_HINTS = (
+        "doctor", "gp", "dentist", "dental", "hospital", "clinic", "pharmacy",
+        "ambulance", "diagnostic", "surgery", "urgent care", "slimming",
+        "fertility", "dialysis", "prison",
+    )
 
     def _service_is_care_home(self) -> Optional[bool]:
-        """Map the service area to CQC's careHome Y/N filter. None = ambiguous."""
+        """
+        Decide CQC's careHome Y/N filter. Prefer the TARGET's actual CQC
+        service types (authoritative); fall back to the user's free-text
+        service area only when the target's types are unknown. None = ambiguous.
+        """
+        # 1. Authoritative: the target's own CQC classification
+        if self._target_service_types:
+            joined = " ".join(self._target_service_types).lower()
+            if "care home" in joined or "nursing" in joined:
+                return True
+            if any(t in joined for t in ("homecare", "domiciliary", "supported living",
+                                         "extra care", "shared lives")):
+                return False
+            # Some social-care types (e.g. hospice) — don't force a filter
+            return None
+
+        # 2. Fallback: the user's typed service area
         s = (self.config.service_area or "").lower()
         care_home_terms = ("residential", "care home", "nursing home", "nursing care",
                            "rest home", "care homes")
@@ -620,6 +654,55 @@ class ResearchAgent:
             return False
         return None
 
+    def _wanted_service_types(self) -> List[str]:
+        """
+        The CQC service types to filter competitors to. Prefer the TARGET's
+        actual CQC service types (e.g. 'Homecare agencies') so we use CQC's
+        own classification rather than the user's free-text label. Falls back
+        to the social-care allowlist when the target's types are unknown.
+        """
+        if self._target_service_types:
+            return [t.lower() for t in self._target_service_types]
+        return list(self._SOCIAL_CARE_HINTS)
+
+    def _service_type_in_scope(self, service_types: List[str], wanted: List[str]) -> bool:
+        """Keep a location if its service types match the wanted set and aren't clinical."""
+        st_lower = [str(s).lower() for s in (service_types or [])]
+        if not st_lower:
+            return False
+        # Exclude clearly clinical/medical providers
+        if any(any(ex in s for ex in self._CLINICAL_EXCLUDE_HINTS) for s in st_lower):
+            return False
+        # Keep if any service type matches the wanted set (target's types or allowlist)
+        for s in st_lower:
+            if any(w in s or s in w for w in wanted):
+                return True
+        return False
+
+    def _augment_rating(self, summary: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        If a location has no current overall rating, fall back to the provider's
+        rating (ratings often sit at provider level for multi-site or
+        domiciliary providers). Mutates and returns the summary.
+        """
+        if summary.get("overall_rating") not in ("Unknown", "", None):
+            return summary
+        pid = summary.get("provider_id")
+        if not pid:
+            return summary
+        try:
+            prov = self.cqc.get_provider(pid)
+        except Exception:
+            prov = None
+        if prov:
+            ps = self.cqc.summarise_provider_profile(prov)
+            if ps.get("overall_rating") not in ("Unknown", "", None):
+                summary["overall_rating"] = ps["overall_rating"]
+                if ps.get("sub_ratings") and not summary.get("sub_ratings"):
+                    summary["sub_ratings"] = ps["sub_ratings"]
+                summary["_rating_from_provider"] = True
+        return summary
+
     def _discover_competitors_cqc(self, status_callback: StatusCallback = _noop) -> List[Dict[str, Any]]:
         """
         Query the CQC API for all registered providers in the target's local
@@ -628,17 +711,24 @@ class ResearchAgent:
         """
         la = self._target_local_authority
         care_home = self._service_is_care_home()
-        if care_home is None:
+        # If the careHome flag is ambiguous but we know the target's service
+        # types, still run (list without the flag and filter by service type).
+        if care_home is None and not self._target_service_types:
             status_callback(
                 f"    ℹ️ Service area '{self.config.service_area}' is ambiguous for CQC "
-                f"care-home filter — using LLM discovery only."
+                f"care-home filter and target type unknown — using LLM discovery only."
             )
             return []
 
-        status_callback(f"  🏛 Querying CQC for all registered providers in **{la}**…")
+        wanted = self._wanted_service_types()
+        wanted_label = ", ".join(self._target_service_types) if self._target_service_types else "social care (general)"
+        status_callback(
+            f"  🏛 Querying CQC for registered providers in **{la}** "
+            f"matching service type(s): _{wanted_label}_…"
+        )
         try:
             locations = self.cqc.list_locations(
-                local_authority=la, care_home=care_home, per_page=100, max_pages=2,
+                local_authority=la, care_home=care_home, per_page=100, max_pages=3,
             )
         except Exception as exc:
             status_callback(f"    ⚠️ CQC area query failed: {exc}")
@@ -647,33 +737,43 @@ class ResearchAgent:
         if not locations:
             status_callback(f"    CQC returned no locations for {la}")
             return []
-        status_callback(
-            f"    CQC returned {len(locations)} registered locations in {la}; "
-            f"fetching details for up to {self.CQC_DETAIL_CAP}…"
-        )
+        status_callback(f"    CQC returned {len(locations)} locations in {la}; filtering by service type…")
 
         out: List[Dict[str, Any]] = []
-        for loc in locations[: self.CQC_DETAIL_CAP]:
+        fetched = 0
+        skipped_clinical = 0
+        target_limit = max(self.config.max_competitors * 3, 15)  # gather enough to rank
+        for loc in locations:
+            if fetched >= self.CQC_DETAIL_CAP or len(out) >= target_limit:
+                break
             name = loc.get("locationName", "").strip()
             if not name:
                 continue
-            # Skip the target company itself
             if _name_match_confidence(self.config.target_company, name) >= 0.6:
-                continue
+                continue  # skip the target itself
             try:
                 raw = self.cqc.get_location(loc["locationId"])
             except Exception:
                 raw = None
+            fetched += 1
             if not raw:
                 continue
             raw["_cqc_url"] = f"https://www.cqc.org.uk/location/{loc['locationId']}"
             raw["_lookup_type"] = "location"
             s = self.cqc.summarise_provider_profile(raw)
+
+            # Filter by service type — exclude GPs/dentists/clinics, keep only
+            # providers whose CQC service types match the target's.
+            if not self._service_type_in_scope(s.get("service_types", []), wanted):
+                skipped_clinical += 1
+                continue
+
+            s = self._augment_rating(s)  # provider-level rating fallback
             out.append({
                 "name": name,
                 "selection_rationale": (
-                    f"CQC-registered provider in {la} (authoritative CQC area list). "
-                    f"Rating: {s.get('overall_rating', 'Unknown')}."
+                    f"CQC-registered {', '.join(s.get('service_types', [])) or 'provider'} "
+                    f"in {la} (authoritative CQC area list). Rating: {s.get('overall_rating', 'Unknown')}."
                 ),
                 "website": s.get("website", ""),
                 "cqc_rating": s.get("overall_rating", "Unknown"),
@@ -692,11 +792,16 @@ class ResearchAgent:
                 "source_urls": [s.get("cqc_url", "")],
             })
 
-        # Rank by significance: more beds first, then higher rating
+        status_callback(
+            f"    Matched {len(out)} in-scope providers "
+            f"(fetched {fetched}, excluded {skipped_clinical} out-of-scope/clinical)"
+        )
+
+        # Rank by significance: rating quality first, then beds (beds=0 for domiciliary)
         out.sort(
             key=lambda c: (
-                c["cqc_data"].get("number_of_beds") or 0,
                 self._RATING_RANK.get(c.get("cqc_rating"), 0),
+                c["cqc_data"].get("number_of_beds") or 0,
             ),
             reverse=True,
         )

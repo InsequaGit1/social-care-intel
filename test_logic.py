@@ -137,6 +137,23 @@ def test_fuzzy_target_match():
     check_true("'Mencap' !~ 'Mears Care'", _fuzzy_name_ratio("Mencap", "Mears Care") < 0.84)
 
 
+def test_service_type_filter():
+    print("\n== CQC service-type scope filter (exclude GPs/dentists) ==")
+    from research_agent import ResearchConfig, ResearchAgent
+    cfg = ResearchConfig(commissioner="X", service_area="domiciliary care",
+                         target_company="Y", time_period="z", research_depth="deep")
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.config = cfg
+    agent._target_service_types = ["Homecare agencies"]
+    wanted = agent._wanted_service_types()
+    check_true("homecare agency in scope", agent._service_type_in_scope(["Homecare agencies"], wanted))
+    check_true("supported living in scope (fallback hints)",
+               agent._service_type_in_scope(["Supported living"], list(ResearchAgent._SOCIAL_CARE_HINTS)))
+    check_true("GP surgery EXCLUDED", not agent._service_type_in_scope(["Doctors/Gps"], wanted))
+    check_true("dentist EXCLUDED", not agent._service_type_in_scope(["Dentists"], wanted))
+    check_true("empty EXCLUDED", not agent._service_type_in_scope([], wanted))
+
+
 def test_care_home_mapping():
     print("\n== Service area → CQC careHome filter ==")
     from research_agent import ResearchConfig, ResearchAgent
@@ -219,6 +236,7 @@ if __name__ == "__main__":
     test_cqc_parsing()
     test_safe_join()
     test_fuzzy_target_match()
+    test_service_type_filter()
     test_care_home_mapping()
     test_cqc_list_parsing()
     test_json_extraction()
