@@ -51,29 +51,27 @@ st.markdown("""
 # Provider config
 # ---------------------------------------------------------------------------
 
+# Claude is the default provider (listed first). Gemini removed.
 PROVIDERS = {
-    "OpenAI": {
-        "models": ["gpt-4o", "gpt-4o-mini"],
-        "env_var": "OPENAI_API_KEY",
-        "note": "Uses the Responses API with web_search_preview grounding.",
-    },
-    "Gemini": {
-        "models": ["gemini-2.0-flash", "gemini-1.5-pro"],
-        "env_var": "GOOGLE_API_KEY",
-        "note": "Uses Google Search grounding via the google-genai SDK.",
-    },
     "Claude": {
-        # Sonnet 4.6 first = sensible cost/quality default for a high-call-volume
-        # tool (a Deep Scan makes 30+ model calls). Opus for max quality, Haiku
-        # for cheapest. IDs per Anthropic's dateless 4.6-generation scheme.
+        # Opus 4.6 is the default model. Sonnet for cheaper/faster runs,
+        # newer Opus for top quality, Haiku for cheapest. IDs per Anthropic's
+        # dateless 4.6-generation scheme.
         "models": [
+            "claude-opus-4-6",
             "claude-sonnet-4-6",
             "claude-opus-4-8",
             "claude-opus-4-7",
             "claude-haiku-4-5-20251001",
         ],
         "env_var": "ANTHROPIC_API_KEY",
-        "note": "Uses the server-side web_search tool. Sonnet = balanced default; Opus = top quality; Haiku = cheapest.",
+        "note": "Uses the server-side web_search tool. Opus = top quality (default); "
+                "Sonnet/Haiku = cheaper for high-volume Deep Scans.",
+    },
+    "OpenAI": {
+        "models": ["gpt-4o", "gpt-4o-mini"],
+        "env_var": "OPENAI_API_KEY",
+        "note": "Uses the Responses API with web_search_preview grounding.",
     },
 }
 
