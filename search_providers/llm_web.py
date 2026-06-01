@@ -141,6 +141,13 @@ class LLMWebProvider(SearchProvider):
     # ------------------------------------------------------------------
 
     def _claude_research(self, prompt: str, max_tokens: int) -> SearchResult:
+        """
+        Claude with the server-side web_search tool. Anthropic executes the
+        searches internally and returns results in the response — we do NOT
+        send tool_result blocks back. The only multi-turn case is stop_reason
+        == "pause_turn" (long-running search), where we pass the assistant
+        turn back unchanged to resume.
+        """
         import anthropic
 
         client = anthropic.Anthropic(api_key=self.api_key)
@@ -148,51 +155,41 @@ class LLMWebProvider(SearchProvider):
         messages = [{"role": "user", "content": prompt}]
         text_parts: List[str] = []
         sources: List[SourceRef] = []
-        max_iterations = 12
+        max_iterations = 8
 
         for _ in range(max_iterations):
             response = client.messages.create(
                 model=self.model_name,
                 max_tokens=max_tokens,
                 temperature=0,  # Determinism
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
                 messages=messages,
             )
 
-            tool_uses = []
             for block in response.content:
-                block_type = getattr(block, "type", "")
-                if block_type == "text":
+                btype = getattr(block, "type", "")
+                if btype == "text":
                     text_parts.append(block.text)
-                elif block_type == "tool_use":
-                    tool_uses.append(block)
-                elif block_type == "tool_result":
-                    # Extract URLs from search result items
-                    for item in getattr(block, "content", []):
+                    # Citations attached to text blocks carry source URLs
+                    for cite in (getattr(block, "citations", None) or []):
+                        url = getattr(cite, "url", "")
+                        title = getattr(cite, "title", "")
+                        if url and not any(s.url == url for s in sources):
+                            sources.append(SourceRef(url=url, title=title))
+                elif btype == "web_search_tool_result":
+                    # Server-side search results: block.content is a list of
+                    # web_search_result items with url/title.
+                    for item in (getattr(block, "content", None) or []):
                         url = getattr(item, "url", "")
                         title = getattr(item, "title", "")
                         if url and not any(s.url == url for s in sources):
                             sources.append(SourceRef(url=url, title=title))
 
-            if response.stop_reason == "end_turn":
-                break
-
-            if response.stop_reason == "tool_use":
-                # Append assistant turn and continue — the server handles search execution
+            if response.stop_reason == "pause_turn":
+                # Resume a long-running server tool call — pass assistant turn back.
                 messages.append({"role": "assistant", "content": response.content})
-                # Acknowledge each tool_use so the conversation can continue
-                tool_results = [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tu.id,
-                        "content": [],
-                    }
-                    for tu in tool_uses
-                ]
-                if tool_results:
-                    messages.append({"role": "user", "content": tool_results})
-            else:
-                break
+                continue
+            break  # end_turn / max_tokens / stop_sequence → done
 
         content = "\n\n".join(text_parts)
         return SearchResult(query=prompt[:120], content=content, sources=sources)

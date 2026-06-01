@@ -126,6 +126,17 @@ def test_safe_join():
     check("limit", _safe_join(["a", "b", "c"], limit=2), "a, b")
 
 
+def test_fuzzy_target_match():
+    print("\n== Fuzzy target name matching (typo tolerance) ==")
+    from research_agent import _fuzzy_name_ratio
+    # Typos that SHOULD fuzzy-match (>= 0.84)
+    check_true("'Ashley Car Ltd' ~ 'Ashley Care'", _fuzzy_name_ratio("Ashley Car Ltd", "Ashley Care") >= 0.84)
+    check_true("'Bluebird Cair' ~ 'Bluebird Care'", _fuzzy_name_ratio("Bluebird Cair", "Bluebird Care") >= 0.84)
+    # Different companies that should NOT match
+    check_true("'Ashley Care' !~ 'Allied Healthcare'", _fuzzy_name_ratio("Ashley Care", "Allied Healthcare") < 0.84)
+    check_true("'Mencap' !~ 'Mears Care'", _fuzzy_name_ratio("Mencap", "Mears Care") < 0.84)
+
+
 def test_care_home_mapping():
     print("\n== Service area → CQC careHome filter ==")
     from research_agent import ResearchConfig, ResearchAgent
@@ -185,6 +196,7 @@ if __name__ == "__main__":
     test_url_filter()
     test_cqc_parsing()
     test_safe_join()
+    test_fuzzy_target_match()
     test_care_home_mapping()
     test_cqc_list_parsing()
     test_enrichment_status()

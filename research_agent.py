@@ -123,6 +123,12 @@ class ResearchAgent:
         ch_number = (target_profile.get("companies_house", {}) or {}).get("number", "Unknown")
         status_callback(f"    Target CQC rating: {cqc_rating} · Companies House: {ch_number}")
 
+        # If the target lookup didn't yield a local authority (e.g. target name
+        # misspelled or not CQC-registered), derive it independently from the
+        # commissioner/area so authoritative CQC area discovery can still run.
+        if not self._target_local_authority and self.cqc and self.brave:
+            self._target_local_authority = self._derive_local_authority(status_callback)
+
         # ---- Phase 0b: Competitor discovery ----
         # CQC area discovery (API-only, authoritative) runs in BOTH modes.
         # LLM discovery (an extra web-search call) is Deep-only.
@@ -316,12 +322,18 @@ class ResearchAgent:
                       r"unitary|authority|icb|nhs|of|and|the)\b", " ", text)
         return {t for t in re.split(r"[^a-z]+", text) if len(t) >= 4}
 
-    def _lookup_cqc(self, provider_name: str, status_callback: StatusCallback = _noop) -> Optional[Dict[str, Any]]:
+    def _lookup_cqc(self, provider_name: str, status_callback: StatusCallback = _noop,
+                    allow_fuzzy: bool = False) -> Optional[Dict[str, Any]]:
         """
         Find a CQC profile for a named provider, using Brave to surface
         candidate URLs, a name-similarity check, and a geographic check to
         avoid attaching a same-named provider from a different town.
-        Only returns data when confidence >= CQC_MATCH_THRESHOLD.
+
+        Normally requires a strict name match (>= CQC_MATCH_THRESHOLD). When
+        allow_fuzzy=True (used for the TARGET, where the user typed the name),
+        a typo-tolerant fallback accepts an edit-distance match (>= 0.84) and
+        flags the result with _fuzzy_match so the dashboard can ask the user
+        to verify it.
         """
         if not (self.brave and self.cqc):
             return None
@@ -330,10 +342,8 @@ class ResearchAgent:
             expected = self._expected_area_tokens()
 
             # Score every valid candidate by name confidence + area preference.
-            # Area is used to PICK among similarly-named candidates (e.g. the
-            # right "Victoria Court"), NOT to hard-reject — so a legitimate
-            # provider registered in a neighbouring district is still kept.
-            candidates = []
+            candidates = []          # strict matches
+            fuzzy_candidates = []    # typo-tolerant matches (target only)
             for r in results:
                 url = r.get("url", "") or ""
                 title = r.get("title", "") or ""
@@ -341,20 +351,31 @@ class ResearchAgent:
                     continue
                 candidate_name = title.split(" - ")[0].split(" | ")[0].strip()
                 name_score = _name_match_confidence(provider_name, candidate_name)
-                if name_score < self.CQC_MATCH_THRESHOLD:
-                    continue
-                # Does the Brave title/snippet/url hint at the target area?
                 hint_text = f"{title} {r.get('description', '')} {url}".lower()
                 hint_tokens = {t for t in re.split(r"[^a-z]+", hint_text) if len(t) >= 4}
                 area_bonus = 0.15 if (expected and not expected.isdisjoint(hint_tokens)) else 0.0
-                candidates.append((name_score + area_bonus, name_score, r, candidate_name))
+                if name_score >= self.CQC_MATCH_THRESHOLD:
+                    candidates.append((name_score + area_bonus, name_score, r, candidate_name))
+                elif allow_fuzzy:
+                    fz = _fuzzy_name_ratio(provider_name, candidate_name)
+                    if fz >= 0.84:
+                        fuzzy_candidates.append((fz + area_bonus, fz, r, candidate_name))
 
-            if not candidates:
+            is_fuzzy = False
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                _, best_score, best, best_candidate = candidates[0]
+            elif fuzzy_candidates:
+                fuzzy_candidates.sort(key=lambda x: x[0], reverse=True)
+                _, best_score, best, best_candidate = fuzzy_candidates[0]
+                is_fuzzy = True
+                status_callback(
+                    f"    🔁 CQC: no exact match for '{provider_name}', "
+                    f"fuzzy-matched '{best_candidate}' (similarity {best_score:.2f}) — please verify."
+                )
+            else:
                 status_callback(f"    ⚠️ CQC: no confident name match for **{provider_name}**")
                 return None
-
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            _, best_score, best, best_candidate = candidates[0]
 
             raw = self.cqc.fetch_from_url(best.get("url", ""))
             if not raw:
@@ -376,6 +397,7 @@ class ResearchAgent:
             summary["_match_confidence"] = round(best_score, 2)
             summary["_matched_name"] = best_candidate
             summary["_area_verified"] = area_verified
+            summary["_fuzzy_match"] = is_fuzzy
 
             beds = summary.get("number_of_beds")
             beds_str = f", {beds} beds" if beds else ""
@@ -390,15 +412,57 @@ class ResearchAgent:
             return None
 
     # ------------------------------------------------------------------
-    # Phase 0a: Verified target-company profile (Deep Scan only)
+    # Derive local authority independently of the target (typo-resilience)
+    # ------------------------------------------------------------------
+
+    def _derive_local_authority(self, status_callback: StatusCallback = _noop) -> str:
+        """
+        Find the CQC local authority for the target area without relying on the
+        target company's record. Searches CQC for any local provider, fetches
+        one, and reads its localAuthority — verifying it matches the expected
+        area tokens (from commissioner/geographic_area).
+        """
+        cfg = self.config
+        area_hint = cfg.geographic_area or cfg.commissioner or ""
+        area_hint = re.sub(r"(?i)\b(city|borough|county|council|district|"
+                           r"metropolitan|unitary|authority|icb|nhs)\b", " ", area_hint).strip()
+        if not area_hint:
+            return ""
+        expected = self._expected_area_tokens()
+        status_callback(f"  🧭 Deriving CQC local authority for **{area_hint}**…")
+        try:
+            results = self.brave.search(
+                f'site:cqc.org.uk {cfg.service_area} {area_hint}', count=6,
+            )
+            for r in results:
+                url = r.get("url", "") or ""
+                if not self.cqc.extract_id_from_url(url):
+                    continue
+                raw = self.cqc.fetch_from_url(url)
+                if not raw:
+                    continue
+                s = self.cqc.summarise_provider_profile(raw)
+                la = s.get("local_authority", "")
+                if not la:
+                    continue
+                la_tokens = {t for t in re.split(r"[^a-z]+", la.lower()) if len(t) >= 4}
+                if not expected or not expected.isdisjoint(la_tokens):
+                    status_callback(f"    Derived local authority: **{la}**")
+                    return la
+        except Exception as exc:
+            status_callback(f"    ⚠️ LA derivation failed: {exc}")
+        return ""
+
+    # ------------------------------------------------------------------
+    # Phase 0a: Verified target-company profile
     # ------------------------------------------------------------------
 
     def _research_target_profile(self, status_callback: StatusCallback = _noop) -> Dict[str, Any]:
         cfg = self.config
 
-        # First — try authoritative CQC lookup if API keys configured.
-        # (Don't yet know the LA, so disambiguation uses commissioner/geo only.)
-        cqc_data = self._lookup_cqc(cfg.target_company, status_callback)
+        # First — try authoritative CQC lookup. allow_fuzzy=True tolerates a
+        # typo in the user-entered target name (e.g. "Ashley Car" → "Ashley Care").
+        cqc_data = self._lookup_cqc(cfg.target_company, status_callback, allow_fuzzy=True)
 
         # Learn the target's local authority so we can disambiguate competitors
         if cqc_data and cqc_data.get("local_authority"):
@@ -468,6 +532,17 @@ class ResearchAgent:
             if cqc_data.get("website"):
                 ls["website_found"] = True
             data["lookup_status"] = ls
+            # Surface fuzzy-match status so the dashboard can ask for verification
+            data["cqc"]["matched_name"] = cqc_data.get("_matched_name", "")
+            data["cqc"]["fuzzy_match"] = cqc_data.get("_fuzzy_match", False)
+
+        # Flag whether the target was confidently identified at all
+        data["target_identified"] = bool(cqc_data)
+        if not cqc_data:
+            status_callback(
+                f"  ⚠️ Target '{cfg.target_company}' could not be confidently matched on CQC. "
+                f"Check the spelling — results for the target will be limited."
+            )
 
         # Strip any hallucinated procurement URLs from the contracts list
         contracts = data.get("contracts_with_commissioner", []) or []
@@ -901,6 +976,21 @@ def _name_match_confidence(query: str, candidate: str) -> float:
     if overlap == len(qt) and overlap >= 2:
         return 0.35
     return (overlap / max(len(qt), len(ct))) * 0.3
+
+
+def _fuzzy_name_ratio(query: str, candidate: str) -> float:
+    """
+    Edit-distance similarity between normalised names, for typo tolerance.
+    Uses difflib SequenceMatcher. "ashley car" vs "ashley care" ≈ 0.95.
+    Only used as a fallback for the TARGET (user-typed) name, never for
+    competitor auto-matching, to avoid false positives.
+    """
+    from difflib import SequenceMatcher
+    nq = _normalise_company_name(query)
+    nc = _normalise_company_name(candidate)
+    if not nq or not nc:
+        return 0.0
+    return SequenceMatcher(None, nq, nc).ratio()
 
 
 def _compute_enrichment_status(comp: Dict, original_status: Dict) -> Dict:

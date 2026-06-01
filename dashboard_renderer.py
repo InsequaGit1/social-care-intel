@@ -179,9 +179,25 @@ class DashboardRenderer:
         if target_profile:
             st.divider()
             st.markdown("### Target Company — Verified Profile")
-            tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+
             cqc = target_profile.get("cqc", {}) or {}
             ch = target_profile.get("companies_house", {}) or {}
+
+            # Loud warning if the target couldn't be confidently identified
+            if not target_profile.get("target_identified", True):
+                st.error(
+                    f"⚠️ **'{self.target}' could not be matched to a CQC-registered provider.** "
+                    f"This usually means the company name is misspelled or the provider isn't "
+                    f"CQC-registered. The target's own profile below is incomplete — "
+                    f"competitor data is unaffected. Check the spelling and re-run."
+                )
+            elif cqc.get("fuzzy_match"):
+                st.warning(
+                    f"🔁 No exact CQC match for '{self.target}'. Showing the closest match: "
+                    f"**{cqc.get('matched_name', '?')}**. Please verify this is the right company."
+                )
+
+            tcol1, tcol2, tcol3, tcol4 = st.columns(4)
             with tcol1:
                 rating = cqc.get("rating", "Unknown")
                 st.metric("CQC Rating", rating)
