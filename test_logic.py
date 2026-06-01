@@ -175,6 +175,28 @@ def test_cqc_list_parsing():
     check("first name", locs[0]["locationName"], "Alpha Home")
 
 
+def test_json_extraction():
+    print("\n== Robust JSON extraction ==")
+    from research_agent import _extract_json
+    # Prose before and after (common with Claude + web search)
+    t1 = 'Here is the analysis you requested:\n{"a": 1, "b": [2, 3]}\nLet me know if you need more.'
+    check("prose-wrapped", _extract_json(t1), {"a": 1, "b": [2, 3]})
+    # Markdown fences
+    t2 = '```json\n{"x": "y"}\n```'
+    check("fenced", _extract_json(t2), {"x": "y"})
+    # Trailing comma (invalid strict JSON)
+    t3 = '{"a": 1, "b": 2,}'
+    check("trailing comma", _extract_json(t3), {"a": 1, "b": 2})
+    # Stray brace in prose before the object
+    t4 = 'Note: use {curly} carefully. Result: {"ok": true}'
+    check("stray brace then object", _extract_json(t4), {"ok": True})
+    # Nested braces
+    t5 = '{"outer": {"inner": {"deep": 1}}}'
+    check("nested", _extract_json(t5), {"outer": {"inner": {"deep": 1}}})
+    # Garbage
+    check("no json", _extract_json("totally not json"), {})
+
+
 def test_enrichment_status():
     print("\n== enrichment status computation ==")
     from research_agent import _compute_enrichment_status
@@ -199,6 +221,7 @@ if __name__ == "__main__":
     test_fuzzy_target_match()
     test_care_home_mapping()
     test_cqc_list_parsing()
+    test_json_extraction()
     test_enrichment_status()
     print()
     if FAILURES:

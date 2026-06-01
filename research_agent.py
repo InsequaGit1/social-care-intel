@@ -168,10 +168,24 @@ class ResearchAgent:
             status_callback("  Parsing research results…")
             raw_data = _extract_json(result.content)
             if not raw_data and result.content:
-                preview = result.content[:200].replace("\n", " ")
-                status_callback(
-                    f"  ⚠️ Model did not return valid JSON. First 200 chars: _{preview}…_"
+                # Retry once, instructing the model to emit ONLY JSON.
+                status_callback("  ↻ First response wasn't valid JSON — retrying with strict JSON instruction…")
+                retry_prompt = (
+                    prompt
+                    + "\n\nIMPORTANT: Your previous response could not be parsed. "
+                    "Return ONLY the JSON object — no explanation, no markdown code fences, "
+                    "no text before or after. Start your response with { and end with }."
                 )
+                retry = self.provider.research(retry_prompt, max_tokens=7000)
+                if retry.ok:
+                    raw_data = _extract_json(retry.content)
+                    if retry.sources:
+                        result.sources.extend(retry.sources)
+                if not raw_data:
+                    preview = (result.content or "")[:200].replace("\n", " ")
+                    status_callback(
+                        f"  ⚠️ Still no valid JSON after retry. First 200 chars: _{preview}…_"
+                    )
 
         status_callback(f"  Found {len(raw_data.get('procurement', []))} procurement notices, "
                         f"{len(raw_data.get('competitors', []))} competitors")
@@ -322,24 +336,37 @@ class ResearchAgent:
                       r"unitary|authority|icb|nhs|of|and|the)\b", " ", text)
         return {t for t in re.split(r"[^a-z]+", text) if len(t) >= 4}
 
+    def _area_query_hint(self) -> str:
+        """A short area string to bias CQC searches to the right town."""
+        cfg = self.config
+        hint = cfg.geographic_area or self._target_local_authority or cfg.commissioner or ""
+        hint = re.sub(r"(?i)\b(city|borough|county|council|district|metropolitan|"
+                      r"unitary|authority|icb|nhs)\b", " ", hint)
+        return re.sub(r"\s+", " ", hint).strip()
+
     def _lookup_cqc(self, provider_name: str, status_callback: StatusCallback = _noop,
-                    allow_fuzzy: bool = False) -> Optional[Dict[str, Any]]:
+                    allow_fuzzy: bool = False, strict_area: bool = False) -> Optional[Dict[str, Any]]:
         """
         Find a CQC profile for a named provider, using Brave to surface
         candidate URLs, a name-similarity check, and a geographic check to
         avoid attaching a same-named provider from a different town.
 
-        Normally requires a strict name match (>= CQC_MATCH_THRESHOLD). When
-        allow_fuzzy=True (used for the TARGET, where the user typed the name),
-        a typo-tolerant fallback accepts an edit-distance match (>= 0.84) and
-        flags the result with _fuzzy_match so the dashboard can ask the user
-        to verify it.
+        - The target area is included in the search query so Brave returns the
+          right-town record (e.g. "Aspen Court" in Tower Hamlets, not Derby).
+        - strict_area=True (used for the TARGET) HARD-REJECTS an out-of-area
+          match, so a wrong-town record never poisons the local-authority used
+          for area discovery.
+        - allow_fuzzy=True (TARGET only) tolerates a typo in the user-typed name.
         """
         if not (self.brave and self.cqc):
             return None
         try:
-            results = self.brave.search(f'site:cqc.org.uk "{provider_name}"', count=8)
             expected = self._expected_area_tokens()
+            area_hint = self._area_query_hint()
+            query = f'site:cqc.org.uk "{provider_name}"'
+            if area_hint:
+                query += f" {area_hint}"
+            results = self.brave.search(query, count=8)
 
             # Score every valid candidate by name confidence + area preference.
             candidates = []          # strict matches
@@ -382,7 +409,7 @@ class ResearchAgent:
                 return None
             summary = self.cqc.summarise_provider_profile(raw)
 
-            # Soft area verification: flag (don't drop) records outside the area.
+            # Area verification.
             area_verified = True
             if expected:
                 record_area = " ".join([
@@ -392,6 +419,17 @@ class ResearchAgent:
                 record_tokens = {t for t in re.split(r"[^a-z]+", record_area) if len(t) >= 4}
                 if record_tokens and expected.isdisjoint(record_tokens):
                     area_verified = False
+
+            # For the TARGET (strict_area), a wrong-town match is almost
+            # certainly the wrong company — reject it so it can't poison the
+            # local authority used for area discovery.
+            if strict_area and not area_verified:
+                status_callback(
+                    f"    🛑 CQC: rejected '{best_candidate}' for **{provider_name}** — "
+                    f"record is in {summary.get('local_authority') or summary.get('town') or 'another area'}, "
+                    f"not the target area ({area_hint or 'specified'})."
+                )
+                return None
 
             summary["_brave_snippet"] = best.get("description", "")
             summary["_match_confidence"] = round(best_score, 2)
@@ -461,8 +499,11 @@ class ResearchAgent:
         cfg = self.config
 
         # First — try authoritative CQC lookup. allow_fuzzy=True tolerates a
-        # typo in the user-entered target name (e.g. "Ashley Car" → "Ashley Care").
-        cqc_data = self._lookup_cqc(cfg.target_company, status_callback, allow_fuzzy=True)
+        # typo in the user-entered target name; strict_area=True rejects a
+        # wrong-town match (e.g. an "Aspen Court" in Derby when the target is
+        # in Tower Hamlets) so it can't poison area discovery.
+        cqc_data = self._lookup_cqc(cfg.target_company, status_callback,
+                                    allow_fuzzy=True, strict_area=True)
 
         # Learn the target's local authority so we can disambiguate competitors
         if cqc_data and cqc_data.get("local_authority"):
@@ -890,39 +931,82 @@ def _fill_template(template: str, **kwargs) -> str:
     return template
 
 
+def _clean_json_text(s: str) -> str:
+    """Remove trailing commas before } or ] which are invalid in strict JSON."""
+    return re.sub(r",(\s*[}\]])", r"\1", s)
+
+
+def _find_balanced_json_blocks(text: str) -> List[str]:
+    """
+    Return all top-level balanced {...} blocks, respecting strings/escapes.
+    Robust to prose containing stray braces before/after the real JSON object.
+    """
+    blocks: List[str] = []
+    depth = 0
+    in_str = False
+    esc = False
+    start = -1
+    for i, ch in enumerate(text):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    blocks.append(text[start : i + 1])
+                    start = -1
+    return blocks
+
+
 def _extract_json(text: str) -> Dict[str, Any]:
     """
-    Robustly extract a JSON object from LLM output.
-    The LLM is instructed to return only JSON but may sometimes wrap it
-    in markdown fences or add a short preamble.
+    Robustly extract a JSON object from LLM output. Handles markdown fences,
+    leading/trailing prose (common with Claude + web search), stray braces,
+    and trailing commas.
     """
     if not text:
         return {}
 
-    # Strip markdown fences
-    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if fence_match:
-        candidate = fence_match.group(1)
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
+    candidates: List[str] = []
 
-    # Try direct parse
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    # 1. Markdown-fenced block(s)
+    for m in re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text):
+        candidates.append(m)
+    # 2. The raw text
+    candidates.append(text)
+    # 3. All balanced {...} blocks, longest first (real JSON is usually biggest)
+    balanced = _find_balanced_json_blocks(text)
+    balanced.sort(key=len, reverse=True)
+    candidates.extend(balanced)
+    # 4. Outermost braces (last resort)
+    bs, be = text.find("{"), text.rfind("}")
+    if bs != -1 and be > bs:
+        candidates.append(text[bs : be + 1])
 
-    # Find the outermost {...} block
-    brace_start = text.find("{")
-    brace_end = text.rfind("}")
-    if brace_start != -1 and brace_end > brace_start:
-        candidate = text[brace_start : brace_end + 1]
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
+    for cand in candidates:
+        cand = cand.strip()
+        if not cand:
+            continue
+        for attempt in (cand, _clean_json_text(cand)):
+            try:
+                parsed = json.loads(attempt)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
 
     return {}
 
