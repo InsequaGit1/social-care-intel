@@ -88,13 +88,42 @@ All four files are also available as download buttons inside the dashboard.
 
 ---
 
+## Deterministic benchmarking (reliability by design)
+
+The benchmarking matrix is **computed, not guessed**. Every 1–5 score comes from a
+pure function (`scoring.py`) applied to authoritative CQC structured data:
+
+| Criterion | Derived from |
+|---|---|
+| CQC Rating | CQC overall rating (word value, verified against the API) |
+| Service & Location Fit | service-type + local-authority + specialism overlap with the target |
+| Quality & Compliance | the five CQC sub-ratings (Safe/Effective/Caring/Responsive/Well-led) |
+| Local Track Record | longevity in the target's local authority + named contracts |
+| Delivery Strength | registered beds + registration longevity |
+| Strategic Differentiators | CQC specialism/service breadth (+ website evidence in Deep Scan) |
+| Overall Bid Threat | weighted composite (shown to one decimal for fine ranking) |
+
+Consequences:
+- **Reproducible** — the same CQC data always yields the same scores (proven by `test_scoring.py`).
+- **Verifiable** — each score links to the exact CQC profile it used.
+- **Consistent** — the identical rubric is applied to every competitor.
+
+The LLM is never used to assign scores; it only writes the executive-summary and
+bid-positioning narrative *on top of* the fixed scores.
+
+Run the test suites any time:
+```bash
+python3 test_scoring.py   # scoring: reproducibility, monotonicity, edge cases
+python3 test_logic.py     # CQC parsing, name-matching, JSON extraction
+```
+
 ## Guardrails
 
 The tool is designed to avoid hallucinated intelligence:
 
 - Claims without a public source are labelled **"No reliable public source found"**
-- All analyst inferences are marked explicitly
-- Scores below 3 include a note that insufficient evidence was found
+- Procurement notices with fabricated-looking URLs are automatically rejected
+- A wrong-town CQC match for the target is hard-rejected (no cross-area contamination)
 - A final **Confidence Rating** (High / Medium / Low) reflects overall data quality
 - The tool will never invent contract award decisions, CQC ratings, or provider relationships
 

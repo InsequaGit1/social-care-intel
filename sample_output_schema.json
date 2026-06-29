@@ -3,6 +3,20 @@
   "title": "Social Care Competitor Intelligence Result",
   "description": "Full output schema for one research run",
   "type": "object",
+  "$defs": {
+    "scoredCriterion": {
+      "type": "object",
+      "description": "A deterministic 1-5 score with verifiable basis",
+      "properties": {
+        "score": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "justification": { "type": "string", "description": "Cites the CQC fact used" },
+        "source": { "type": "string", "description": "CQC profile URL where applicable" },
+        "method": { "type": "string", "description": "e.g. 'deterministic (CQC-derived)'" },
+        "basis": { "type": "object", "description": "Raw facts used to derive the score" },
+        "analyst_inference": { "type": "boolean" }
+      }
+    }
+  },
   "properties": {
     "metadata": {
       "type": "object",
@@ -123,17 +137,29 @@
     },
     "benchmarking": {
       "type": "object",
-      "description": "Keys are company names",
+      "description": "Keys are company names. Scores are computed deterministically from CQC data (scoring.py).",
       "additionalProperties": {
         "type": "object",
-        "description": "Keys are criterion names",
-        "additionalProperties": {
-          "type": "object",
-          "properties": {
-            "score": { "type": "integer", "minimum": 1, "maximum": 5 },
-            "justification": { "type": "string" },
-            "source": { "type": "string" },
-            "analyst_inference": { "type": "boolean" }
+        "properties": {
+          "cqc_rating": {
+            "type": "object",
+            "description": "Authoritative CQC rating as a word value",
+            "properties": {
+              "value": { "type": "string", "enum": ["Outstanding", "Good", "Requires improvement", "Inadequate", "Unknown", "No published rating"] },
+              "url": { "type": "string" },
+              "verified": { "type": "boolean", "description": "true if confirmed against the CQC Syndication API" }
+            }
+          },
+          "service_location_fit": { "$ref": "#/$defs/scoredCriterion" },
+          "quality_compliance": { "$ref": "#/$defs/scoredCriterion" },
+          "local_track_record": { "$ref": "#/$defs/scoredCriterion" },
+          "delivery_strength": { "$ref": "#/$defs/scoredCriterion" },
+          "strategic_differentiators": { "$ref": "#/$defs/scoredCriterion" },
+          "overall_bid_threat": {
+            "allOf": [{ "$ref": "#/$defs/scoredCriterion" }],
+            "properties": {
+              "raw_score": { "type": "number", "description": "Unrounded weighted composite (1-5, one decimal) for fine ranking" }
+            }
           }
         }
       }
@@ -141,7 +167,7 @@
     "benchmarking_criteria": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Ordered list of criterion keys"
+      "description": "Ordered list of criterion keys (cqc_rating first, overall_bid_threat last)"
     },
     "commissioner_priorities": {
       "type": "array",

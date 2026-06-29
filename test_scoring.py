@@ -184,6 +184,46 @@ def test_justifications_present():
     check("all criteria have justifications", ok)
 
 
+def test_target_without_cqc():
+    print("\n== Graceful handling when TARGET has no CQC data ==")
+    blank_target = {"name": "Mystery Co", "is_target": True, "cqc_rating": "Unknown",
+                    "cqc_data": {}}
+    try:
+        s = scoring.score_company(STRONG_COMP, blank_target)
+        ok_range = all(1 <= s[k]["score"] <= 5 for k in s if k != "cqc_rating")
+        check("competitor still scored 1-5 with blank target", ok_range)
+        check("no crash on blank target", True)
+    except Exception as exc:
+        check(f"no crash on blank target (got {exc})", False)
+
+
+def test_end_to_end_reproducibility():
+    print("\n== End-to-end benchmark reproducibility (identical matrix twice) ==")
+    from analysis_agent import AnalysisAgent
+    from research_agent import ResearchConfig
+    from search_providers.base import SearchProvider, SearchResult
+
+    class Stub(SearchProvider):
+        name = "stub"
+        def research(self, prompt, max_tokens=6000):
+            return SearchResult(query="x", content='{"executive_summary":"","bid_positioning":[],"evidence_gaps":[]}')
+
+    cfg = ResearchConfig(commissioner="Southend-on-Sea", service_area="",
+                         target_company="Ashley Care Ltd", time_period="3y", research_depth="quick")
+    agent = AnalysisAgent(cfg, Stub())
+    companies = [TARGET, STRONG_COMP, WEAK_COMP, OUT_OF_AREA]
+
+    def matrix():
+        b = agent._benchmark(all_companies=[copy.deepcopy(c) for c in companies],
+                             research_results={"competitors": companies}, website_analyses={})
+        return {name: {k: (v.get("score") if isinstance(v, dict) and "score" in v else v.get("value"))
+                       for k, v in cs.items()}
+                for name, cs in b["scores"].items()}
+
+    m1, m2 = matrix(), matrix()
+    check("two full benchmark runs produce identical matrices", m1 == m2)
+
+
 if __name__ == "__main__":
     test_reproducibility()
     test_monotonicity()
@@ -193,6 +233,8 @@ if __name__ == "__main__":
     test_bed_scaling()
     test_all_scores_in_range()
     test_justifications_present()
+    test_target_without_cqc()
+    test_end_to_end_reproducibility()
     print()
     if FAILURES:
         print(f"❌ {len(FAILURES)} failed: {FAILURES}")
