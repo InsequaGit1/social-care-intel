@@ -556,8 +556,13 @@ class ResearchAgent:
 
         # Overwrite CQC section with authoritative API data if we have it
         if cqc_data:
+            api_rating = cqc_data.get("overall_rating") or "Unknown"
+            # If the CQC API has no current rating (e.g. during methodology transition),
+            # fall back to whatever the LLM extracted from the CQC profile web page.
+            if api_rating == "Unknown":
+                api_rating = (data.get("cqc") or {}).get("rating") or "Unknown"
             data["cqc"] = {
-                "rating": cqc_data.get("overall_rating", "Unknown"),
+                "rating": api_rating,
                 "last_inspection_date": cqc_data.get("last_inspection_date", "Unknown"),
                 "registration_date": cqc_data.get("registration_date", ""),
                 "number_of_beds": cqc_data.get("number_of_beds"),
@@ -569,7 +574,7 @@ class ResearchAgent:
                 "local_authority": cqc_data.get("local_authority", ""),
                 "registered_locations": [{
                     "name": cqc_data.get("name", ""),
-                    "rating": cqc_data.get("overall_rating", "Unknown"),
+                    "rating": api_rating,
                     "url": cqc_data.get("cqc_url", ""),
                 }],
                 "verified_source": "CQC Syndication API",

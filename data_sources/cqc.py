@@ -101,7 +101,7 @@ class CQCClient:
 
         current = data.get("currentRatings") or {}
         overall_obj = current.get("overall") or {}
-        overall = overall_obj.get("rating", "Unknown")
+        overall = overall_obj.get("rating") or "Unknown"
 
         # Inspection / report date
         last_inspection = data.get("lastInspection", {}) or {}

@@ -65,7 +65,13 @@ Search for and extract information across ALL of the following areas:
    - Social value and sustainability commitments
    - TUPE considerations and workforce requirements
    - Inspection findings and improvement plans
-   - Search: "[commissioner] commissioning strategy [service_area]", "[commissioner] market position statement", "[commissioner] [service_area] specification"
+   - REQUIRED SEARCHES — run all of these:
+     * "{commissioner}" "market position statement" "{service_area}"
+     * "{commissioner}" commissioning strategy "{service_area}"
+     * "{commissioner}" adult social care strategy 2024 OR 2025
+     * "{commissioner}" cabinet "{service_area}" decision 2024 OR 2025
+     * site:local.gov.uk "{commissioner}"
+   - You MUST find and cite at least one source from the commissioner's own website or an official council publication. Do not rely solely on procurement notices for commissioner priorities.
 
 4. CQC INFORMATION
    - CQC registration and rating for {target_company}

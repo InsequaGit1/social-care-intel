@@ -47,20 +47,18 @@ def _safe_join(items, sep: str = ", ", limit=None) -> str:
 class AnalysisAgent:
 
     WEB_PROMPT_PATH = Path(__file__).parent / "prompts" / "website_analysis_prompt.txt"
-    BENCH_PROMPT_PATH = Path(__file__).parent / "prompts" / "benchmarking_prompt.txt"
-    BENCH_SINGLE_PATH = Path(__file__).parent / "prompts" / "benchmarking_single_prompt.txt"
     SYNTH_PATH = Path(__file__).parent / "prompts" / "synthesis_prompt.txt"
 
-    # 7 criteria. cqc_rating is a WORD value pulled from API/research;
-    # the other 6 are 1-5 scored by the LLM.
+    # 7 criteria. cqc_rating is a WORD value from the CQC API; the other 6 are
+    # 1-5 scores computed DETERMINISTICALLY from CQC data (see scoring.py).
     CRITERIA = [
         "cqc_rating",                 # word: Outstanding|Good|Requires Improvement|Inadequate|Unknown
-        "service_location_fit",       # 1-5 — service offer match + geographic proximity to commissioner
-        "quality_compliance",         # 1-5
-        "local_track_record",         # 1-5 — actual delivered contracts in area / with commissioner
-        "delivery_strength",          # 1-5 — workforce_capacity + mobilisation_capability
-        "strategic_differentiators",  # 1-5 — digital + social value + partnership + website credibility
-        "overall_bid_threat",         # 1-5
+        "service_location_fit",       # 1-5 — service-type + local-authority overlap with target
+        "quality_compliance",         # 1-5 — from CQC sub-ratings
+        "local_track_record",         # 1-5 — longevity in area + named contracts
+        "delivery_strength",          # 1-5 — beds + registration longevity
+        "strategic_differentiators",  # 1-5 — specialism/service breadth (+ website evidence in Deep)
+        "overall_bid_threat",         # 1-5 — weighted composite
     ]
     SCORED_CRITERIA = [c for c in CRITERIA if c != "cqc_rating"]
 
@@ -68,8 +66,6 @@ class AnalysisAgent:
         self.config = config
         self.provider = provider
         self._web_template = self.WEB_PROMPT_PATH.read_text(encoding="utf-8")
-        self._bench_template = self.BENCH_PROMPT_PATH.read_text(encoding="utf-8")
-        self._bench_single_template = self.BENCH_SINGLE_PATH.read_text(encoding="utf-8")
         self._synth_template = self.SYNTH_PATH.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------------
@@ -90,10 +86,14 @@ class AnalysisAgent:
         # ---- Website analysis ----------------------------------------
         website_analyses: Dict[str, Any] = {}
 
-        status_callback(f"  Analysing website: **{cfg.target_company}** ({cfg.target_website})…")
+        # Prefer user-supplied URL; fall back to URL discovered during research phase
+        target_profile = research_results.get("target_profile", {}) or {}
+        discovered_url = target_profile.get("official_website") or ""
+        target_url = (cfg.target_website or "").strip() or discovered_url
+        status_callback(f"  Analysing website: **{cfg.target_company}** ({target_url or 'No URL found'})…")
         target_analysis = self._analyse_website(
             company_name=cfg.target_company,
-            website_url=cfg.target_website,
+            website_url=target_url,
         )
         website_analyses[cfg.target_company] = target_analysis
 
@@ -199,9 +199,9 @@ class AnalysisAgent:
         if not data:
             return _empty_analysis(company_name, website_url, error="Could not parse response")
 
-        # Ensure company name and URL are set correctly
-        data.setdefault("company_name", company_name)
-        data.setdefault("website_url", website_url)
+        # Force-set company name; keep LLM-returned URL if non-empty, else use parameter
+        data["company_name"] = company_name
+        data["website_url"] = data.get("website_url") or website_url
 
         # Append any sources the provider extracted from HTTP metadata
         existing_pages = set(data.get("pages_accessed", []))
@@ -223,42 +223,35 @@ class AnalysisAgent:
         status_callback: StatusCallback = _noop,
     ) -> Dict[str, Any]:
         """
-        Score companies one at a time, then run a synthesis call for
-        the executive summary, bid positioning, and evidence gaps.
+        Score every company DETERMINISTICALLY from authoritative CQC structured
+        data (scoring.py) — fully reproducible and verifiable. The LLM is used
+        only afterwards for the synthesis narrative, never for the 1-5 scores.
         """
+        import scoring
+
         cfg = self.config
         research_summary = _build_research_summary(
             research_results=research_results,
             website_analyses=website_analyses,
         )
 
-        # ---- Per-company scoring -------------------------------------
+        # The target row carries the reference CQC data for like-for-like fit.
+        target = next((c for c in all_companies if c.get("is_target")), all_companies[0] if all_companies else {})
+
+        # ---- Deterministic per-company scoring -----------------------
+        status_callback(f"    Scoring {len(all_companies)} companies deterministically from CQC data…")
         scores: Dict[str, Any] = {}
-        for i, comp in enumerate(all_companies, 1):
+        for comp in all_companies:
             name = comp.get("name", "Unknown")
-            is_target = comp.get("is_target", False)
-            label = f"{name}{' (TARGET)' if is_target else ''}"
-            status_callback(f"    [{i}/{len(all_companies)}] Scoring **{label}**…")
-
-            company_scores = self._score_single_company(
+            wa = website_analyses.get(name, {}) or {}
+            weq = (wa.get("evidence_quality", {}) or {}).get("overall_evidence_quality") if wa.get("accessible") else None
+            contracts = comp.get("known_contracts_with_commissioner") or []
+            scores[name] = scoring.score_company(
                 company=comp,
-                website_analysis=website_analyses.get(name, {}),
-                research_summary=research_summary,
+                target=target,
+                contracts=contracts,
+                website_evidence_quality=weq,
             )
-            if not company_scores:
-                company_scores = {
-                    c: {"score": 0, "justification": "Scoring call failed", "source": "", "analyst_inference": False}
-                    for c in self.SCORED_CRITERIA
-                }
-
-            # Stamp authoritative CQC rating as a word value, with verification flag
-            company_scores["cqc_rating"] = {
-                "value": comp.get("cqc_rating", "Unknown") or "Unknown",
-                "url": comp.get("cqc_profile_url", "") or "",
-                "verified": bool(comp.get("cqc_verified", False)),
-            }
-
-            scores[name] = company_scores
 
         # ---- Synthesis pass ------------------------------------------
         status_callback("    Synthesising executive summary and bid positioning…")
@@ -275,75 +268,6 @@ class AnalysisAgent:
             "evidence_gaps": synthesis.get("evidence_gaps", []),
         }
 
-    def _score_single_company(
-        self,
-        company: Dict,
-        website_analysis: Dict,
-        research_summary: str,
-    ) -> Optional[Dict[str, Any]]:
-        cfg = self.config
-        name = company.get("name", "Unknown")
-
-        # Build a focused company profile from research + website analysis
-        profile_parts = [
-            f"Name: {name}",
-            f"Website: {company.get('website', 'Unknown')}",
-            f"CQC rating: {company.get('cqc_rating', 'Unknown')}",
-            f"CQC profile: {company.get('cqc_profile_url', '')}",
-            f"Companies House: {company.get('companies_house_number', 'Unknown')}",
-            f"Size: {company.get('size_description', 'Unknown')}",
-            f"Services: {_safe_join(company.get('services', []))}",
-            f"Geographic coverage: {_safe_join(company.get('geographic_coverage', []))}",
-            f"Known contracts with commissioner: {company.get('known_contracts_with_commissioner', [])}",
-            f"Selection rationale: {company.get('selection_rationale', 'N/A')}",
-        ]
-
-        # Authoritative CQC structured data — ground scores in real facts
-        cqc = company.get("cqc_data", {}) or {}
-        if cqc:
-            profile_parts.append("--- AUTHORITATIVE CQC DATA (objective facts, prefer over website claims) ---")
-            if cqc.get("sub_ratings"):
-                subs = ", ".join(f"{k}: {v}" for k, v in cqc["sub_ratings"].items())
-                profile_parts.append(f"CQC sub-ratings: {subs}")
-            if cqc.get("number_of_beds"):
-                profile_parts.append(f"Registered beds: {cqc['number_of_beds']}")
-            if cqc.get("registration_date"):
-                profile_parts.append(f"CQC registration date (track record): {cqc['registration_date']}")
-            if cqc.get("last_inspection_date"):
-                profile_parts.append(f"Last CQC inspection: {cqc['last_inspection_date']}")
-            if cqc.get("service_types"):
-                profile_parts.append(f"CQC service types: {_safe_join(cqc['service_types'])}")
-            if cqc.get("specialisms"):
-                profile_parts.append(f"CQC specialisms: {_safe_join(cqc['specialisms'])}")
-            if cqc.get("local_authority"):
-                profile_parts.append(f"CQC local authority: {cqc['local_authority']}")
-
-        if website_analysis and website_analysis.get("accessible", True):
-            ev = website_analysis.get("evidence_quality", {})
-            profile_parts.append(f"Evidence quality from website: {ev.get('overall_evidence_quality', 'Unknown')}")
-            profile_parts.append(f"Strengths: {_safe_join(website_analysis.get('strengths', []), sep='; ', limit=5)}")
-            profile_parts.append(f"Gaps: {_safe_join(website_analysis.get('weaknesses_and_gaps', []), sep='; ', limit=5)}")
-
-        company_profile = "\n".join(profile_parts)
-
-        prompt = _fill_template(self._bench_single_template,
-            target_company=cfg.target_company,
-            commissioner=cfg.commissioner,
-            service_area=cfg.service_area_label,
-            geographic_area=cfg.geographic_area or "Not specified",
-            company_name=name,
-            company_profile=company_profile,
-            research_summary=research_summary[:4000],  # Cap context size
-        )
-
-        result = self.provider.research(prompt, max_tokens=3500)
-        if not result.ok:
-            return None
-
-        data = _extract_json(result.content)
-        if not data:
-            return None
-        return data.get("scores", {})
 
     def _synthesise(self, scores: Dict[str, Any], research_summary: str) -> Dict[str, Any]:
         cfg = self.config

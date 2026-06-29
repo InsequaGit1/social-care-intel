@@ -584,6 +584,13 @@ class DashboardRenderer:
             st.warning("Benchmarking data was not generated.")
             return
 
+        st.caption(
+            "📐 Scores are computed **deterministically** from authoritative CQC data "
+            "(ratings, sub-ratings, registered beds, registration date, service types, "
+            "specialisms, local authority) — the same inputs always produce the same scores. "
+            "Each score's basis is shown in the justifications below."
+        )
+
         companies = list(benchmarking.keys())
 
         # Derive the criteria list from the actual data, NOT from the saved
@@ -617,9 +624,26 @@ class DashboardRenderer:
             )
         html_parts.append('</tr></thead><tbody>')
 
-        for company in companies:
+        # Order rows: target first, then competitors by raw overall score (strongest threat first)
+        target_name = self.target
+
+        def _raw_overall(company):
+            ov = benchmarking[company].get("overall_bid_threat", {})
+            if isinstance(ov, dict):
+                return ov.get("raw_score", ov.get("score", 0))
+            return 0
+
+        ordered = sorted(
+            companies,
+            key=lambda c: (c != target_name, -_raw_overall(c)),
+        )
+
+        for company in ordered:
             scores = benchmarking[company]
-            cells = [f'<td style="padding:6px 10px;border-bottom:1px solid #e0e0e0;font-weight:bold;">{company}</td>']
+            is_target = company == target_name
+            name_style = "font-weight:bold;" + ("background:#e8eaf6;" if is_target else "")
+            name_label = f"{company} 🎯" if is_target else company
+            cells = [f'<td style="padding:6px 10px;border-bottom:1px solid #e0e0e0;{name_style}">{name_label}</td>']
             for crit in criteria_list:
                 val = scores.get(crit, {})
                 if crit == "cqc_rating":
@@ -640,7 +664,11 @@ class DashboardRenderer:
                         s_int = 0
                     colour = SCORE_COLOURS.get(s_int, "#eee")
                     text_colour = "white" if s_int >= 4 else ("black" if s_int == 3 else "white")
-                    display = f"{s_int}/5" if s_int else "—"
+                    # Show the raw decimal for the overall column to break ties
+                    if crit in ("overall_bid_threat", "overall_competitor_strength") and isinstance(val, dict) and val.get("raw_score") is not None:
+                        display = f"{val['raw_score']:.1f}/5"
+                    else:
+                        display = f"{s_int}/5" if s_int else "—"
                     cells.append(
                         f'<td style="padding:6px;border-bottom:1px solid #e0e0e0;text-align:center;'
                         f'background:{colour};color:{text_colour};font-weight:bold;">{display}</td>'
