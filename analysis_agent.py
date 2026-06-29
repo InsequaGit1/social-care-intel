@@ -272,25 +272,33 @@ class AnalysisAgent:
     def _synthesise(self, scores: Dict[str, Any], research_summary: str) -> Dict[str, Any]:
         cfg = self.config
 
-        # Build a compact, name-explicit summary of scores for the synthesizer.
-        # Surfaces the verified CQC rating (word) plus each 1-5 criterion.
+        # Build a name-explicit, RANKED summary of the deterministic scores so the
+        # synthesizer narrates from fixed numbers (it must not re-score anything).
+        def _overall_raw(cs):
+            ov = cs.get("overall_bid_threat", {})
+            return ov.get("raw_score", ov.get("score", 0)) if isinstance(ov, dict) else 0
+
+        ranked = sorted(
+            scores.items(),
+            key=lambda kv: (kv[0] != cfg.target_company, -_overall_raw(kv[1])),
+        )
+
         scored_lines = []
-        for company, cs in scores.items():
+        for company, cs in ranked:
             cqc = cs.get("cqc_rating", {})
             cqc_label = cqc.get("value", "Unknown") if isinstance(cqc, dict) else "Unknown"
-            cqc_flag = "✓verified" if (isinstance(cqc, dict) and cqc.get("verified")) else "unverified"
-
-            scored_parts = [f"CQC={cqc_label} ({cqc_flag})"]
+            tag = " [TARGET]" if company == cfg.target_company else ""
+            parts = [f"CQC={cqc_label}"]
             for k in self.SCORED_CRITERIA:
                 v = cs.get(k, {})
                 s = v.get("score", 0) if isinstance(v, dict) else 0
-                scored_parts.append(f"{k}={s}")
-            overall = cs.get("overall_bid_threat", {})
-            overall_score = overall.get("score", 0) if isinstance(overall, dict) else 0
-            scored_lines.append(
-                f"  - {company} [overall threat {overall_score}/5]: " + " · ".join(scored_parts)
-            )
-        scored_summary = "\n".join(scored_lines)
+                parts.append(f"{k}={s}")
+            scored_lines.append(f"  - {company}{tag} (overall {_overall_raw(cs)}/5): " + " · ".join(parts))
+        scored_summary = (
+            "Scores below are computed deterministically from CQC data and are FINAL. "
+            "Do not re-score; build the narrative on these exact numbers.\n"
+            + "\n".join(scored_lines)
+        )
 
         prompt = _fill_template(self._synth_template,
             target_company=cfg.target_company,

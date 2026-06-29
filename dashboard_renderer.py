@@ -680,10 +680,12 @@ class DashboardRenderer:
 
         st.divider()
         st.markdown("### Score Justifications")
+        st.caption("Ordered by overall bid threat. Each score traces to the CQC fact it used.")
 
-        for company in companies:
-            with st.expander(f"📊 {company}", expanded=False):
-                scores = benchmarking[company]
+        for company in ordered:  # same ranking as the matrix
+            scores = benchmarking[company]
+            is_target = company == target_name
+            with st.expander(f"{'🎯 ' if is_target else '📊 '}{company}", expanded=is_target):
                 for crit in criteria_list:
                     val = scores.get(crit, {})
                     label = CRITERION_LABELS.get(crit, crit)
@@ -693,14 +695,12 @@ class DashboardRenderer:
                             word = val.get("value", "Unknown")
                             verified = val.get("verified", False)
                             url = val.get("url", "")
-                            st.markdown(
-                                f"**{label}:** {_cqc_badge_html(word, verified)}",
-                                unsafe_allow_html=True,
-                            )
+                            line = f"**{label}:** {_cqc_badge_html(word, verified)}"
                             if url and url.startswith("http"):
-                                st.markdown(f"  → [CQC profile]({url})")
+                                line += f" — [verify on cqc.org.uk]({url})"
                             elif not verified:
-                                st.markdown("  → *Not verified against CQC Syndication API*")
+                                line += " — *not verified against CQC API*"
+                            st.markdown(line, unsafe_allow_html=True)
                         continue
 
                     if not isinstance(val, dict):
@@ -708,21 +708,13 @@ class DashboardRenderer:
                     score = val.get("score", 0)
                     justification = val.get("justification", "No justification provided")
                     source = val.get("source", "")
-                    is_inference = val.get("analyst_inference", False)
-
                     badge = _score_badge(score)
-                    inf_note = " *(analyst inference)*" if is_inference else ""
 
-                    st.markdown(
-                        f"**{label}** {badge}{inf_note}: {justification}",
-                        unsafe_allow_html=True,
-                    )
-                    if source and source != "No source found" and source.startswith("http"):
-                        st.markdown(f"  → [{source}]({source})")
-                    elif source and source != "No source found":
-                        st.markdown(f"  → {source}")
-                    else:
-                        st.markdown("  → *No reliable public source found*")
+                    line = f"**{label}** {badge}: {justification}"
+                    if source and source.startswith("http"):
+                        link_label = "verify on cqc.org.uk" if "cqc.org.uk" in source else "source"
+                        line += f" [{link_label}]({source})"
+                    st.markdown(line, unsafe_allow_html=True)
 
     # ------------------------------------------------------------------
     # Tab: Commissioner Priorities
