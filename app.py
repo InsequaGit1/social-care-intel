@@ -35,14 +35,14 @@ st.markdown("""
 <style>
   .block-container { padding-top: 2rem; }
   .main-header {
-    background: linear-gradient(135deg, #1a237e 0%, #283593 50%, #3949ab 100%);
+    background: linear-gradient(135deg, #4a148c 0%, #6a1b9a 50%, #8e24aa 100%);
     padding: 1.5rem 2rem;
     border-radius: 10px;
     color: white;
     margin-bottom: 1.5rem;
   }
   .main-header h1 { color: white; margin: 0; font-size: 1.6rem; }
-  .main-header p  { color: #c5cae9; margin: 0.3rem 0 0; font-size: 0.9rem; }
+  .main-header p  { color: #e1bee7; margin: 0.3rem 0 0; font-size: 0.9rem; }
   div[data-testid="stMetricValue"] { font-size: 1.1rem; }
 </style>
 """, unsafe_allow_html=True)
