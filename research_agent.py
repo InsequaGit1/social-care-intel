@@ -371,10 +371,29 @@ class ResearchAgent:
         try:
             expected = self._expected_area_tokens()
             area_hint = self._area_query_hint()
-            query = f'site:cqc.org.uk "{provider_name}"'
+            # CQC lists providers without company suffixes (e.g. "Ashley Care",
+            # not "Ashley Care Ltd"), so search on the core name. Try a ladder
+            # of queries — area-constrained first, then progressively looser —
+            # and stop at the first that returns valid CQC candidates. This
+            # prevents an over-constrained query returning nothing.
+            core = _search_core_name(provider_name)
+            variants = []
             if area_hint:
-                query += f" {area_hint}"
-            results = self.brave.search(query, count=8)
+                variants.append(f'site:cqc.org.uk "{core}" {area_hint}')
+            variants.append(f'site:cqc.org.uk "{core}"')
+            if area_hint:
+                variants.append(f'site:cqc.org.uk {core} {area_hint}')
+            # De-dupe while preserving order
+            seen_q = set()
+            variants = [v for v in variants if not (v in seen_q or seen_q.add(v))]
+
+            results = []
+            for v in variants:
+                r = self.brave.search(v, count=8)
+                if any("cqc.org.uk" in (x.get("url") or "") and self.cqc.extract_id_from_url(x.get("url") or "")
+                       for x in r):
+                    results = r
+                    break
 
             # Score every valid candidate by name confidence + area preference.
             candidates = []          # strict matches
@@ -1176,6 +1195,20 @@ def _name_match_confidence(query: str, candidate: str) -> float:
     if overlap == len(qt) and overlap >= 2:
         return 0.35
     return (overlap / max(len(qt), len(ct))) * 0.3
+
+
+def _search_core_name(name: str) -> str:
+    """
+    The provider name with trailing company-form suffixes removed, for building
+    CQC search queries. CQC lists 'Ashley Care', not 'Ashley Care Ltd', so the
+    quoted search must use the core name. Preserves original casing/words
+    otherwise (matching confidence still uses the full name).
+    """
+    if not name:
+        return ""
+    s = re.sub(r"(?i)\b(ltd|limited|plc|llp|llc|inc|cic|c\.i\.c\.)\b\.?", " ", name)
+    s = re.sub(r"[^\w\s&'-]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _fuzzy_name_ratio(query: str, candidate: str) -> float:
