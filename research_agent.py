@@ -165,35 +165,15 @@ class ResearchAgent:
         )
 
         # ---- Phase 1: Master research (procurement + priorities + competitors) ----
+        # Generous token budget: with web search the model spends tokens on
+        # narration + search results BEFORE the JSON; 7k caused mid-JSON
+        # truncation on Deep scans (observed live), which parses as nothing.
         status_callback(f"  Searching procurement databases for **{cfg.service_area}** in **{geo_label}**…")
         prompt = self._build_prompt()
-        result = self.provider.research(prompt, max_tokens=7000)
-
-        if not result.ok:
-            status_callback(f"  ⚠️ Research call returned an error: {result.error}")
-            raw_data: Dict[str, Any] = {}
-        else:
-            status_callback("  Parsing research results…")
-            raw_data = _extract_json(result.content)
-            if not raw_data and result.content:
-                # Retry once, instructing the model to emit ONLY JSON.
-                status_callback("  ↻ First response wasn't valid JSON — retrying with strict JSON instruction…")
-                retry_prompt = (
-                    prompt
-                    + "\n\nIMPORTANT: Your previous response could not be parsed. "
-                    "Return ONLY the JSON object — no explanation, no markdown code fences, "
-                    "no text before or after. Start your response with { and end with }."
-                )
-                retry = self.provider.research(retry_prompt, max_tokens=7000)
-                if retry.ok:
-                    raw_data = _extract_json(retry.content)
-                    if retry.sources:
-                        result.sources.extend(retry.sources)
-                if not raw_data:
-                    preview = (result.content or "")[:200].replace("\n", " ")
-                    status_callback(
-                        f"  ⚠️ Still no valid JSON after retry. First 200 chars: _{preview}…_"
-                    )
+        raw_data, call_sources = research_json(
+            self.provider, prompt, max_tokens=16000,
+            status_callback=status_callback, label="Procurement research",
+        )
 
         status_callback(f"  Found {len(raw_data.get('procurement', []))} procurement notices, "
                         f"{len(raw_data.get('competitors', []))} competitors")
@@ -201,7 +181,7 @@ class ResearchAgent:
         # Merge provider-returned sources with any sources embedded in the response
         provider_sources = [
             {"url": s.url, "title": s.title, "used_for": "Research phase"}
-            for s in result.sources
+            for s in call_sources
         ]
         combined_sources = _merge_sources(
             raw_data.get("sources", []), provider_sources
@@ -219,9 +199,23 @@ class ResearchAgent:
         master_competitors = raw_data.get("competitors", [])
         sources = combined_sources[: cfg.max_sources]
 
-        # Merge discovered competitors with master research competitors (dedupe by name)
-        competitors = _merge_competitors(discovered_competitors, master_competitors)[: cfg.max_competitors]
-        status_callback(f"  Combined competitor list: {len(competitors)} unique providers")
+        # Merge discovered competitors with master research competitors (dedupe by name),
+        # then select the final list. CQC-verified locals fill most slots, but up to 3
+        # slots are reserved for LLM/procurement-discovered players (framework
+        # incumbents, national bidders) that CQC area data alone would never surface.
+        merged_all = _merge_competitors(discovered_competitors, master_competitors)
+        cqc_part = [c for c in merged_all if c.get("cqc_data")]
+        other_part = [c for c in merged_all if not c.get("cqc_data")]
+        reserve = min(3, len(other_part))
+        competitors = cqc_part[: max(0, cfg.max_competitors - reserve)] + other_part[:reserve]
+        if len(competitors) < cfg.max_competitors:
+            used = {c.get("name") for c in competitors}
+            competitors += [c for c in cqc_part if c.get("name") not in used][: cfg.max_competitors - len(competitors)]
+        status_callback(
+            f"  Combined competitor list: {len(competitors)} providers "
+            f"({sum(1 for c in competitors if c.get('cqc_data'))} CQC-verified local, "
+            f"{sum(1 for c in competitors if not c.get('cqc_data'))} from procurement/LLM discovery)"
+        )
 
         # ---- Phase 1.5 (Deep only): Drill down on multi-provider contracts ----
         if not cfg.is_quick and procurement:
@@ -566,12 +560,11 @@ class ResearchAgent:
             geographic_area=cfg.geographic_area or "Not specified",
         ) + verified_context
 
-        result = self.provider.research(prompt, max_tokens=4000)
-        if not result.ok:
-            status_callback(f"  ⚠️ Target profile lookup failed: {result.error}")
-            return {"cqc": {"rating": cqc_data.get("overall_rating", "Unknown")} if cqc_data else {}}
-
-        data = _extract_json(result.content) or {}
+        data, _ = research_json(self.provider, prompt, max_tokens=8000,
+                                status_callback=status_callback, label="Target profile")
+        if not data and not cqc_data:
+            return {}
+        data = data or {"cqc": {"rating": cqc_data.get("overall_rating", "Unknown")}}
 
         # Overwrite CQC section with authoritative API data if we have it
         if cqc_data:
@@ -620,6 +613,12 @@ class ResearchAgent:
                 f"  ⚠️ Target '{cfg.target_company}' could not be confidently matched on CQC. "
                 f"Check the spelling — results for the target will be limited."
             )
+
+        # Validate the Companies House number format (LLM-supplied)
+        ch = data.get("companies_house") or {}
+        if isinstance(ch, dict) and ch.get("number"):
+            ch["number"] = _valid_ch_number(ch["number"])
+            data["companies_house"] = ch
 
         # Strip any hallucinated procurement URLs from the contracts list
         contracts = data.get("contracts_with_commissioner", []) or []
@@ -860,12 +859,8 @@ class ResearchAgent:
             known_competitors=known,
         )
 
-        result = self.provider.research(prompt, max_tokens=5000)
-        if not result.ok:
-            status_callback(f"  ⚠️ Discovery call failed: {result.error}")
-            return []
-
-        data = _extract_json(result.content)
+        data, _ = research_json(self.provider, prompt, max_tokens=10000,
+                                status_callback=status_callback, label="LLM discovery")
         if not data:
             return []
 
@@ -900,11 +895,7 @@ class ResearchAgent:
             contract_value=procurement.get("value", ""),
         )
 
-        result = self.provider.research(prompt, max_tokens=3000)
-        if not result.ok:
-            return {"awarded_providers": [], "shortlisted_providers": [], "notes": f"Drilldown failed: {result.error}"}
-
-        data = _extract_json(result.content)
+        data, _ = research_json(self.provider, prompt, max_tokens=6000, label="Contract drill-down")
         return data if data else {"awarded_providers": [], "shortlisted_providers": [], "notes": "No JSON returned"}
 
     # ------------------------------------------------------------------
@@ -975,17 +966,10 @@ class ResearchAgent:
             geographic_area=cfg.geographic_area or "Unknown",
         )
 
-        result = self.provider.research(prompt, max_tokens=3500)
-        if not result.ok:
-            # Even if LLM call failed, stamp CQC data so it's not lost
-            base = dict(competitor)
-            if cqc_data:
-                base["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
-                base["cqc_profile_url"] = cqc_data.get("cqc_url", "")
-            return base
-
-        enriched_data = _extract_json(result.content)
+        enriched_data, _ = research_json(self.provider, prompt, max_tokens=8000,
+                                         label=f"Enrichment ({name})")
         if not enriched_data:
+            # LLM enrichment failed — keep the competitor, stamp CQC data so it's not lost
             base = dict(competitor)
             if cqc_data:
                 base["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
@@ -1000,6 +984,27 @@ class ResearchAgent:
         # Always preserve original selection_rationale
         if competitor.get("selection_rationale"):
             merged["selection_rationale"] = competitor["selection_rationale"]
+
+        # Deterministic validation gates on LLM-supplied facts:
+        # 1. Companies House number must be format-valid, else Unknown.
+        merged["companies_house_number"] = _valid_ch_number(merged.get("companies_house_number"))
+        # 2. Drop contract entries whose source URL looks fabricated, and
+        #    "negative finding" pseudo-entries the model records when it finds
+        #    nothing ("No contracts found" is not a contract).
+        contracts = merged.get("known_contracts_with_commissioner") or []
+        cleaned_contracts = []
+        for c in contracts:
+            if isinstance(c, dict):
+                src = str(c.get("source_url") or "")
+                title = str(c.get("title") or "").lower()
+                if src and _is_url_suspicious(src):
+                    continue  # fabricated notice URL — drop entirely
+                if re.match(r"\s*no\s+(contracts?|awards?|records?|results?)\b", title):
+                    continue  # negative finding recorded as an entry — drop
+            elif isinstance(c, str) and re.match(r"\s*no\s+(contracts?|awards?)\b", c.lower()):
+                continue
+            cleaned_contracts.append(c)
+        merged["known_contracts_with_commissioner"] = cleaned_contracts
         # ALWAYS overwrite CQC fields with authoritative API data if present
         if cqc_data:
             merged["cqc_rating"] = cqc_data.get("overall_rating", "Unknown")
@@ -1054,6 +1059,43 @@ class ResearchAgent:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def research_json(provider, prompt: str, max_tokens: int,
+                  status_callback: StatusCallback = _noop, label: str = ""):
+    """
+    Robust JSON-emitting LLM call, used by EVERY stage that expects JSON back.
+    - Generous token budget (callers pass stage-appropriate sizes; with web
+      search the model spends heavily on narration/search results before the
+      JSON, and truncation parses as nothing).
+    - On parse failure, retries once demanding JSON-only output.
+    Returns (data, sources): data is {} only after both attempts fail; sources
+    aggregates SourceRef URLs seen across attempts.
+    """
+    sources = []
+    result = provider.research(prompt, max_tokens=max_tokens)
+    if not result.ok:
+        status_callback(f"    ⚠️ {label or 'LLM'} call error: {result.error}")
+        return {}, sources
+    sources.extend(result.sources or [])
+    data = _extract_json(result.content)
+    if data:
+        return data, sources
+    status_callback(f"    ↻ {label or 'LLM'} response wasn't valid JSON — retrying (strict)…")
+    retry_prompt = (
+        prompt
+        + "\n\nIMPORTANT: Your previous response could not be parsed. Return ONLY the "
+        "JSON object — no explanation, no markdown fences, nothing before or after. "
+        "Start with { and end with }. Keep string values concise so the full JSON fits."
+    )
+    retry = provider.research(retry_prompt, max_tokens=max_tokens)
+    if retry.ok:
+        sources.extend(retry.sources or [])
+        data = _extract_json(retry.content)
+        if data:
+            return data, sources
+    status_callback(f"    ⚠️ {label or 'LLM'}: no valid JSON after retry.")
+    return {}, sources
+
 
 def _fill_template(template: str, **kwargs) -> str:
     """
@@ -1197,6 +1239,28 @@ def _name_match_confidence(query: str, candidate: str) -> float:
     return (overlap / max(len(qt), len(ct))) * 0.3
 
 
+def _valid_ch_number(num: Any) -> str:
+    """
+    Normalise a Companies House number: 7-8 digits (7 = legacy without leading
+    zero, padded to 8) or 2 letters + 6 digits. The LLM sometimes returns the
+    number inside an explanatory sentence ("10828063 (parent entity …)"), so a
+    valid-shaped token is EXTRACTED from prose rather than the field being
+    discarded. Anything without a valid-shaped token becomes 'Unknown'.
+    Format-valid numbers can still be wrong, but this deterministically removes
+    obviously fabricated shapes.
+    """
+    s = str(num or "").strip().upper()
+    if re.fullmatch(r"\d{7,8}", s):
+        return s.zfill(8)
+    if re.fullmatch(r"[A-Z]{2}\d{6}", s):
+        return s
+    m = re.search(r"\b([A-Z]{2}\d{6})\b", s) or re.search(r"\b(\d{7,8})\b", s)
+    if m:
+        tok = m.group(1)
+        return tok.zfill(8) if tok.isdigit() else tok
+    return "Unknown"
+
+
 def _search_core_name(name: str) -> str:
     """
     The provider name with trailing company-form suffixes removed, for building
@@ -1230,14 +1294,14 @@ def _compute_enrichment_status(comp: Dict, original_status: Dict) -> Dict:
     """Recompute enrichment flags from the actual data fields after enrichment ran."""
     website = comp.get("website", "")
     cqc_url = comp.get("cqc_profile_url", "")
-    ch_num = comp.get("companies_house_number", "")
+    ch_num = _valid_ch_number(comp.get("companies_house_number", ""))
     contracts = comp.get("known_contracts_with_commissioner", [])
 
     return {
         "attempted": True,
         "website_found": bool(website and website not in ("Unknown", "") and website.startswith("http")),
         "cqc_found": bool(cqc_url and "cqc.org.uk" in cqc_url),
-        "companies_house_found": bool(ch_num and ch_num != "Unknown" and len(str(ch_num)) >= 6),
+        "companies_house_found": ch_num != "Unknown",
         "contracts_found": bool(contracts),
         "searches_run": original_status.get("searches_run", []),
         "error": original_status.get("error"),

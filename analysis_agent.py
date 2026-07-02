@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from research_agent import ResearchConfig, _extract_json, _fill_template
+from research_agent import ResearchConfig, _extract_json, _fill_template, research_json
 from search_providers.base import SearchProvider
 
 
@@ -190,14 +190,13 @@ class AnalysisAgent:
             max_pages=cfg.max_pages_per_website,
         )
 
-        result = self.provider.research(prompt, max_tokens=5000)
-
-        if not result.ok:
-            return _empty_analysis(company_name, website_url, error=result.error)
-
-        data = _extract_json(result.content)
+        data, call_sources = research_json(
+            self.provider, prompt, max_tokens=10000,
+            label=f"Website analysis ({company_name})",
+        )
         if not data:
-            return _empty_analysis(company_name, website_url, error="Could not parse response")
+            return _empty_analysis(company_name, website_url,
+                                   error="Analysis response could not be parsed after retry")
 
         # Force-set company name; keep LLM-returned URL if non-empty, else use parameter
         data["company_name"] = company_name
@@ -205,7 +204,7 @@ class AnalysisAgent:
 
         # Append any sources the provider extracted from HTTP metadata
         existing_pages = set(data.get("pages_accessed", []))
-        for s in result.sources:
+        for s in call_sources:
             if s.url not in existing_pages:
                 data.setdefault("pages_accessed", []).append(s.url)
 
@@ -309,12 +308,8 @@ class AnalysisAgent:
             research_summary=research_summary[:3000],
         )
 
-        result = self.provider.research(prompt, max_tokens=3500)
-        if not result.ok:
-            return {}
-
-        data = _extract_json(result.content)
-        return data if data else {}
+        data, _ = research_json(self.provider, prompt, max_tokens=10000, label="Synthesis")
+        return data or {}
 
     # ------------------------------------------------------------------
     # Helpers

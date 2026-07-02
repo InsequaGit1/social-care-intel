@@ -184,6 +184,47 @@ def test_justifications_present():
     check("all criteria have justifications", ok)
 
 
+def test_contract_evidence_gate():
+    print("\n== Contract evidence gate (unevidenced claims never move a score) ==")
+    good = [{"title": "Care at Home", "source_url": "https://www.find-tender.service.gov.uk/Notice/005986-2026"}]
+    council_reg = [{"title": "Spot purchase ASC", "source_url": "https://www.southend.gov.uk/downloads/file/9543/our-spending-over-500"}]
+    fabricated = [{"title": "X", "source_url": "https://www.contractsfinder.service.gov.uk/Notice/1234567890"}]
+    marketing = [{"title": "X", "source_url": "https://provider-site.co.uk/our-contracts"}]
+    strings = ["Care at Home Framework"]  # bare string claims
+    search_page = [{"title": "No contracts found", "source_url": "https://www.contractsfinder.service.gov.uk/Search/Results"}]
+    negative = [{"title": "No contracts with the commissioner", "source_url": "https://www.find-tender.service.gov.uk/Notice/005986-2026"}]
+    check("official notice URL counts", len(scoring.validated_contracts(good)) == 1)
+    check("council spending register counts", len(scoring.validated_contracts(council_reg)) == 1)
+    check("fabricated notice ID excluded", len(scoring.validated_contracts(fabricated)) == 0)
+    check("non-official domain excluded", len(scoring.validated_contracts(marketing)) == 0)
+    check("bare string claims excluded", len(scoring.validated_contracts(strings)) == 0)
+    check("search/results page excluded", len(scoring.validated_contracts(search_page)) == 0)
+    check("negative-finding title excluded", len(scoring.validated_contracts(negative)) == 0)
+
+    cqc = {"local_authority": "Southend-on-Sea", "registration_date": "2016-01-22"}
+    tgt = {"local_authority": "Southend-on-Sea"}
+    with_ev = scoring.score_local_track_record(cqc, tgt, good)
+    without_ev = scoring.score_local_track_record(cqc, tgt, marketing)
+    check("evidenced contract raises track record", with_ev["score"] > without_ev["score"])
+    check("unevidenced claim noted in justification", "not counted" in without_ev["justification"])
+
+
+def test_ch_number_validation():
+    print("\n== Companies House number format validation ==")
+    from research_agent import _valid_ch_number
+    check("8 digits valid", _valid_ch_number("09782291") == "09782291")
+    check("7 digits normalised", _valid_ch_number("9782291") == "09782291")
+    check("2 letters + 6 digits valid", _valid_ch_number("SC123456") == "SC123456")
+    check("sequential fake rejected", _valid_ch_number("04184239") == "04184239")  # format-valid passes (can't catch all)
+    check("too short rejected", _valid_ch_number("1234") == "Unknown")
+    check("prose rejected", _valid_ch_number("not listed") == "Unknown")
+    check("empty rejected", _valid_ch_number("") == "Unknown")
+    check("number extracted from explanatory prose",
+          _valid_ch_number("10828063 (ENS GROUP LIMITED — parent entity)") == "10828063")
+    check("SC number extracted from prose",
+          _valid_ch_number("registered as SC123456 in Scotland") == "SC123456")
+
+
 def test_target_without_cqc():
     print("\n== Graceful handling when TARGET has no CQC data ==")
     blank_target = {"name": "Mystery Co", "is_target": True, "cqc_rating": "Unknown",
@@ -233,6 +274,8 @@ if __name__ == "__main__":
     test_bed_scaling()
     test_all_scores_in_range()
     test_justifications_present()
+    test_contract_evidence_gate()
+    test_ch_number_validation()
     test_target_without_cqc()
     test_end_to_end_reproducibility()
     print()

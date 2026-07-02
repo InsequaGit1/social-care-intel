@@ -58,6 +58,48 @@ def _norm_list(items: List[Any]) -> List[str]:
     return [str(x).strip().lower() for x in (items or []) if str(x).strip()]
 
 
+# Official procurement domains — a contract only counts as EVIDENCED when its
+# source_url sits on one of these (or another .gov.uk site).
+_OFFICIAL_PROCUREMENT_DOMAINS = (
+    "contractsfinder.service.gov.uk",
+    "find-tender.service.gov.uk",
+    "ted.europa.eu",
+)
+
+
+def validated_contracts(contracts: Optional[List]) -> List[Dict[str, Any]]:
+    """
+    Filter a contracts list down to entries with verifiable official sources.
+    Deterministic evidence gate: LLM-claimed contracts without a real
+    procurement URL are excluded from scoring (they may still be shown in the
+    dashboard as unevidenced claims, but they never move a score).
+    """
+    out: List[Dict[str, Any]] = []
+    for c in contracts or []:
+        if not isinstance(c, dict):
+            continue
+        title = str(c.get("title") or "").strip().lower()
+        # Negative findings recorded as entries ("No contracts found") don't count
+        if title.startswith("no contract") or title.startswith("no award") or title.startswith("no record"):
+            continue
+        url = str(c.get("source_url") or "").strip()
+        if not url.startswith("http"):
+            continue
+        host = url.split("/")[2].lower() if url.count("/") >= 2 else ""
+        official = any(d in host for d in _OFFICIAL_PROCUREMENT_DOMAINS) or host.endswith(".gov.uk")
+        if not official:
+            continue
+        path = url.split(host, 1)[-1].lower()
+        # A search/listing page is not evidence of a specific contract
+        if "/search" in path or "results" in path.rsplit("/", 1)[-1][:12]:
+            continue
+        # Reject placeholder/sequential notice IDs (hallucination fingerprints)
+        if "1234567890" in url or "0987654321" in url:
+            continue
+        out.append(c)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Individual criterion scorers — each returns (score, justification, basis)
 # ---------------------------------------------------------------------------
@@ -228,17 +270,22 @@ def score_local_track_record(cqc: Dict[str, Any], target_cqc: Dict[str, Any],
     else:
         reasons.append("not registered in the target's local authority")
 
-    n_contracts = len(contracts or [])
-    if n_contracts:
+    evidenced = validated_contracts(contracts)
+    n_claimed = len(contracts or [])
+    n_evidenced = len(evidenced)
+    if n_evidenced:
         score += 2
-        reasons.append(f"{n_contracts} named contract(s) with commissioner")
+        reasons.append(f"{n_evidenced} contract(s) evidenced on official procurement sources")
+    elif n_claimed:
+        reasons.append(f"{n_claimed} contract claim(s) lack official-source evidence — not counted")
 
     score = _clamp(score)
     return {
         "score": score,
         "justification": "Local track record: " + "; ".join(reasons) + ".",
-        "source": cqc.get("cqc_url", ""),
-        "basis": {"in_target_la": in_area, "named_contracts": n_contracts,
+        "source": (evidenced[0].get("source_url") if evidenced else cqc.get("cqc_url", "")),
+        "basis": {"in_target_la": in_area, "evidenced_contracts": n_evidenced,
+                  "claimed_contracts": n_claimed,
                   "registration_date": cqc.get("registration_date", "")},
     }
 
