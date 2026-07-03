@@ -283,6 +283,31 @@ class ResearchAgent:
             competitors = enriched
             sources = sources[: cfg.max_sources]
 
+        # Drop "competitors" that are actually the TARGET under another name —
+        # detected by an identical Companies House number (legal entity vs
+        # trading name, e.g. 'Ashley Community Care Services Ltd' t/a 'Ashley
+        # Care'). Their evidenced contracts are reassigned to the target.
+        target_ch = _valid_ch_number((target_profile.get("companies_house") or {}).get("number"))
+        if target_ch != "Unknown":
+            kept = []
+            for comp in competitors:
+                comp_ch = _valid_ch_number(comp.get("companies_house_number"))
+                if comp_ch == target_ch:
+                    status_callback(
+                        f"  🛑 Removed **{comp.get('name')}** from competitors — same Companies House "
+                        f"number as the target ({target_ch}): it is the target's own legal entity. "
+                        f"Its contract evidence has been attributed to the target."
+                    )
+                    tp_contracts = target_profile.setdefault("contracts_with_commissioner", [])
+                    existing_urls = {str(c.get("source_url")) for c in tp_contracts if isinstance(c, dict)}
+                    for k in comp.get("known_contracts_with_commissioner") or []:
+                        if isinstance(k, dict) and str(k.get("source_url")) in existing_urls:
+                            continue
+                        tp_contracts.append(k)
+                    continue
+                kept.append(comp)
+            competitors = kept
+
         # Ensure every competitor carries an enrichment_status (Quick mode
         # skips Phase 2b, so stamp from whatever data we have).
         for comp in competitors:

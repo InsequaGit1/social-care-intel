@@ -291,10 +291,44 @@ class DashboardRenderer:
         st.subheader("Contract History & Procurement Activity")
         procurement = self.r.get("procurement", [])
 
+        # Evidenced provider-level contracts (council spending registers,
+        # contract registers) found during competitor enrichment — often the
+        # richest signal of who actually holds local work.
+        import scoring as _scoring
+        provider_contracts = []
+        for comp in self.r.get("competitors", []):
+            for c in _scoring.validated_contracts(comp.get("known_contracts_with_commissioner")):
+                provider_contracts.append((comp.get("name", "Unknown"), c))
+        target_profile = self.r.get("target_profile") or {}
+        for c in _scoring.validated_contracts(target_profile.get("contracts_with_commissioner")):
+            provider_contracts.append((f"{self.target} 🎯", c))
+
+        if provider_contracts:
+            st.markdown("### Evidenced local contracts by provider")
+            st.caption("From official sources only (council spending/contract registers, procurement notices).")
+            for provider, c in provider_contracts:
+                title = c.get("title", "Untitled")
+                date = c.get("date", "")
+                value = c.get("value", "")
+                url = c.get("source_url", "")
+                line = f"- **{provider}** — {title}"
+                if date and str(date).lower() not in ("unknown", ""):
+                    line += f" ({date})"
+                if value and str(value).lower() not in ("unknown", "not published", ""):
+                    line += f" — {value}"
+                if url.startswith("http"):
+                    line += f" [source]({url})"
+                st.markdown(line)
+            st.divider()
+
         if not procurement:
-            st.warning("No procurement notices or contracts were found for this commissioner and service area.")
+            if not provider_contracts:
+                st.warning("No procurement notices or contracts were found for this commissioner and service area.")
+            else:
+                st.info("No open procurement notices found for this service area in the review period.")
             return
 
+        st.markdown("### Procurement notices")
         for p in procurement:
             conf_colour = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(
                 p.get("confidence", "low"), "⚪"
