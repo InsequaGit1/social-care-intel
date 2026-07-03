@@ -59,13 +59,24 @@ class LLMWebProvider(SearchProvider):
 
         client = OpenAI(api_key=self.api_key)
 
-        response = client.responses.create(
+        kwargs = dict(
             model=self.model_name,
             tools=[{"type": "web_search_preview"}],
             input=prompt,
             max_output_tokens=max_tokens,
-            temperature=0,  # Determinism: same input → same output (within web search variance)
         )
+        # Some newer models reject the temperature parameter — adapt at runtime.
+        if not getattr(self, "_temperature_unsupported", False):
+            kwargs["temperature"] = 0
+        try:
+            response = client.responses.create(**kwargs)
+        except Exception as exc:
+            if "temperature" in str(exc).lower() and "temperature" in kwargs:
+                self._temperature_unsupported = True
+                kwargs.pop("temperature")
+                response = client.responses.create(**kwargs)
+            else:
+                raise
 
         text_parts: List[str] = []
         sources: List[SourceRef] = []
@@ -158,13 +169,27 @@ class LLMWebProvider(SearchProvider):
         max_iterations = 8
 
         for _ in range(max_iterations):
-            response = client.messages.create(
+            kwargs = dict(
                 model=self.model_name,
                 max_tokens=max_tokens,
-                temperature=0,  # Determinism
                 tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
                 messages=messages,
             )
+            # Older Claude models accept temperature=0 (low-variance narrative);
+            # newer generations (e.g. opus-4-8) reject the parameter with a 400
+            # "`temperature` is deprecated for this model". Adapt at runtime and
+            # remember for the rest of this provider's lifetime.
+            if not getattr(self, "_temperature_unsupported", False):
+                kwargs["temperature"] = 0
+            try:
+                response = client.messages.create(**kwargs)
+            except anthropic.BadRequestError as exc:
+                if "temperature" in str(exc).lower() and "temperature" in kwargs:
+                    self._temperature_unsupported = True
+                    kwargs.pop("temperature")
+                    response = client.messages.create(**kwargs)
+                else:
+                    raise
 
             for block in response.content:
                 btype = getattr(block, "type", "")
