@@ -398,6 +398,8 @@ def score_company(company: Dict[str, Any], target: Dict[str, Any],
         "value": company.get("cqc_rating", "Unknown") or "Unknown",
         "url": company.get("cqc_profile_url", "") or "",
         "verified": bool(company.get("cqc_verified", False)),
+        "is_current": bool(cqc.get("rating_is_current", True)),
+        "report_date": cqc.get("rating_report_date", "") or "",
     }
 
     # Mark each scored criterion as deterministic + add a flat source field

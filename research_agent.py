@@ -600,6 +600,8 @@ class ResearchAgent:
                 api_rating = (data.get("cqc") or {}).get("rating") or "Unknown"
             data["cqc"] = {
                 "rating": api_rating,
+                "rating_is_current": cqc_data.get("rating_is_current", True),
+                "rating_report_date": cqc_data.get("rating_report_date", ""),
                 "last_inspection_date": cqc_data.get("last_inspection_date", "Unknown"),
                 "registration_date": cqc_data.get("registration_date", ""),
                 "number_of_beds": cqc_data.get("number_of_beds"),
@@ -835,6 +837,8 @@ class ResearchAgent:
                 "cqc_verified": True,
                 "cqc_data": {
                     "sub_ratings": s.get("sub_ratings", {}),
+                    "rating_is_current": s.get("rating_is_current", True),
+                    "rating_report_date": s.get("rating_report_date", ""),
                     "number_of_beds": s.get("number_of_beds"),
                     "registration_date": s.get("registration_date", ""),
                     "last_inspection_date": s.get("last_inspection_date", ""),
@@ -941,6 +945,8 @@ class ResearchAgent:
             comp["cqc_verified"] = True
             comp["cqc_data"] = {
                 "sub_ratings": cqc_data.get("sub_ratings", {}),
+                "rating_is_current": cqc_data.get("rating_is_current", True),
+                "rating_report_date": cqc_data.get("rating_report_date", ""),
                 "number_of_beds": cqc_data.get("number_of_beds"),
                 "registration_date": cqc_data.get("registration_date", ""),
                 "last_inspection_date": cqc_data.get("last_inspection_date", ""),
@@ -1038,6 +1044,8 @@ class ResearchAgent:
             # Store the rich CQC structured data for benchmarking + dashboard
             merged["cqc_data"] = {
                 "sub_ratings": cqc_data.get("sub_ratings", {}),
+                "rating_is_current": cqc_data.get("rating_is_current", True),
+                "rating_report_date": cqc_data.get("rating_report_date", ""),
                 "number_of_beds": cqc_data.get("number_of_beds"),
                 "registration_date": cqc_data.get("registration_date", ""),
                 "last_inspection_date": cqc_data.get("last_inspection_date", ""),

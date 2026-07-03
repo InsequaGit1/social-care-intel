@@ -89,7 +89,8 @@ CQC_RATING_COLOURS = {
 }
 
 
-def _cqc_badge_html(value: str, verified: bool = False) -> str:
+def _cqc_badge_html(value: str, verified: bool = False,
+                    is_current: bool = True, report_date: str = "") -> str:
     # Normalise to title-case for lookup
     norm = (value or "Unknown").strip()
     colour = CQC_RATING_COLOURS.get(norm, "#9e9e9e")
@@ -100,10 +101,16 @@ def _cqc_badge_html(value: str, verified: bool = False) -> str:
                 colour = v
                 break
     suffix = " ✓" if verified else ""
+    # Flag historic (non-current) ratings so they aren't read as live
+    tag = ""
+    if norm.lower() != "unknown" and not is_current:
+        yr = (report_date or "")[:4]
+        tag = (f'<span style="font-weight:normal;font-size:0.9em;"> · historic'
+               f'{(" " + yr) if yr else ""}</span>')
     return (
         f'<span style="background:{colour};color:white;padding:2px 8px;'
         f'border-radius:4px;font-weight:bold;font-size:0.85em;">'
-        f'{norm}{suffix}</span>'
+        f'{norm}{suffix}{tag}</span>'
     )
 
 
@@ -684,7 +691,8 @@ class DashboardRenderer:
                     if isinstance(val, dict):
                         word = val.get("value", "Unknown")
                         verified = val.get("verified", False)
-                        cell = _cqc_badge_html(word, verified)
+                        cell = _cqc_badge_html(word, verified,
+                                               val.get("is_current", True), val.get("report_date", ""))
                     else:
                         cell = _cqc_badge_html(str(val) if val else "Unknown")
                     cells.append(
@@ -729,7 +737,12 @@ class DashboardRenderer:
                             word = val.get("value", "Unknown")
                             verified = val.get("verified", False)
                             url = val.get("url", "")
-                            line = f"**{label}:** {_cqc_badge_html(word, verified)}"
+                            is_current = val.get("is_current", True)
+                            rdate = val.get("report_date", "")
+                            line = f"**{label}:** {_cqc_badge_html(word, verified, is_current, rdate)}"
+                            if not is_current and word.lower() != "unknown":
+                                line += (f" — ⚠️ no *current* CQC rating; this is the latest published "
+                                         f"rating{(' (' + rdate[:10] + ')') if rdate else ''}")
                             if url and url.startswith("http"):
                                 line += f" — [verify on cqc.org.uk]({url})"
                             elif not verified:

@@ -131,6 +131,8 @@ class AnalysisAgent:
             "cqc_verified": target_cqc.get("verified_source") == "CQC Syndication API",
             "cqc_data": {
                 "sub_ratings": target_cqc.get("sub_ratings", {}),
+                "rating_is_current": target_cqc.get("rating_is_current", True),
+                "rating_report_date": target_cqc.get("rating_report_date", ""),
                 "number_of_beds": target_cqc.get("number_of_beds"),
                 "registration_date": target_cqc.get("registration_date", ""),
                 "last_inspection_date": target_cqc.get("last_inspection_date", ""),

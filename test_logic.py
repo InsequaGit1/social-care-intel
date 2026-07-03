@@ -177,6 +177,39 @@ def test_care_home_mapping():
     check("unknown thing -> None", make("widget manufacturing"), None)
 
 
+def test_cqc_historic_rating_fallback():
+    print("\n== CQC historic-rating fallback (empty currentRatings) ==")
+    from data_sources.cqc import CQCClient
+    client = CQCClient("dummy")
+    # Location like Ashley Care: no currentRatings, populated historicRatings
+    raw = {
+        "locationId": "1-2430518179", "name": "Ashley Care",
+        "currentRatings": {},
+        "lastInspection": {"date": "2022-09-28"},
+        "historicRatings": [
+            {"reportDate": "2020-02-21", "overall": {"rating": "Requires improvement",
+                "keyQuestionRatings": [{"name": "Safe", "rating": "Requires improvement"}]}},
+            {"reportDate": "2022-11-30", "overall": {"rating": "Requires improvement",
+                "keyQuestionRatings": [{"name": "Safe", "rating": "Requires improvement"},
+                                       {"name": "Caring", "rating": "Good"}]}},
+            {"reportDate": "2022-05-17", "overall": {"rating": "Inadequate",
+                "keyQuestionRatings": [{"name": "Safe", "rating": "Inadequate"}]}},
+        ],
+    }
+    s = client.summarise_provider_profile(raw)
+    check("falls back to a historic rating", s["overall_rating"], "Requires improvement")
+    check("picks MOST RECENT historic (2022-11-30 not 2022-05-17)", s["rating_report_date"], "2022-11-30")
+    check("flags rating as not current", s["rating_is_current"], False)
+    check("historic sub-ratings extracted", s.get("sub_ratings", {}).get("Caring"), "Good")
+
+    # Current rating present → is_current True
+    raw2 = {"locationId": "1-1", "name": "X",
+            "currentRatings": {"overall": {"rating": "Good", "reportDate": "2024-01-01",
+                "keyQuestionRatings": [{"name": "Safe", "rating": "Good"}]}}}
+    s2 = client.summarise_provider_profile(raw2)
+    check("current rating flagged current", s2["rating_is_current"], True)
+
+
 def test_cqc_list_parsing():
     print("\n== CQC list_locations response parsing ==")
     # Validate the list endpoint shape handling without network
@@ -239,6 +272,7 @@ if __name__ == "__main__":
     test_fuzzy_target_match()
     test_service_type_filter()
     test_care_home_mapping()
+    test_cqc_historic_rating_fallback()
     test_cqc_list_parsing()
     test_json_extraction()
     test_enrichment_status()

@@ -101,20 +101,40 @@ class CQCClient:
 
         current = data.get("currentRatings") or {}
         overall_obj = current.get("overall") or {}
-        overall = overall_obj.get("rating") or "Unknown"
+        overall = overall_obj.get("rating") or ""
+        rating_is_current = bool(overall)
+        rating_report_date = overall_obj.get("reportDate") or ""
+
+        # Fallback: many providers (esp. after a focused re-inspection) have an
+        # empty currentRatings but a populated historicRatings — the CQC website
+        # still shows the latest published rating from that history. Use the most
+        # recent historic entry so we don't report "Unknown" when a rating exists.
+        if not overall:
+            historic = data.get("historicRatings") or []
+            historic = sorted(historic, key=lambda h: h.get("reportDate", ""), reverse=True)
+            for h in historic:
+                h_overall = (h.get("overall") or {})
+                if h_overall.get("rating"):
+                    overall_obj = h_overall
+                    overall = h_overall["rating"]
+                    rating_report_date = h.get("reportDate") or ""
+                    rating_is_current = False
+                    break
+
+        overall = overall or "Unknown"
 
         # Inspection / report date
         last_inspection = data.get("lastInspection", {}) or {}
         inspection_date = (
             last_inspection.get("date")
-            or overall_obj.get("reportDate")
+            or rating_report_date
             or (data.get("lastReport", {}) or {}).get("publicationDate")
         )
 
         website = data.get("website") or ""
         phone = data.get("phoneNumber") or ""
 
-        # --- Sub-ratings (correct path: currentRatings.overall.keyQuestionRatings[]) ---
+        # --- Sub-ratings (from currentRatings, or the historic entry we fell back to) ---
         sub_ratings = {}
         for kq in (overall_obj.get("keyQuestionRatings") or []):
             name = (kq.get("name") or "").strip()
@@ -144,6 +164,8 @@ class CQCClient:
             "location_id": data.get("locationId") or "",
             "name": data.get("providerName") or data.get("name") or "",
             "overall_rating": overall,
+            "rating_is_current": rating_is_current,
+            "rating_report_date": rating_report_date or "",
             "last_inspection_date": inspection_date or "Unknown",
             "registration_status": data.get("registrationStatus") or "",
             "registration_date": data.get("registrationDate") or "",
