@@ -277,7 +277,10 @@ class AnalysisAgent:
         # synthesizer narrates from fixed numbers (it must not re-score anything).
         def _overall_raw(cs):
             ov = cs.get("overall_bid_threat", {})
-            return ov.get("raw_score", ov.get("score", 0)) if isinstance(ov, dict) else 0
+            if not isinstance(ov, dict):
+                return 0
+            v = ov.get("raw_score", ov.get("score", 0))
+            return v if v is not None else -1  # N/K rows rank last
 
         ranked = sorted(
             scores.items(),
@@ -293,8 +296,10 @@ class AnalysisAgent:
             for k in self.SCORED_CRITERIA:
                 v = cs.get(k, {})
                 s = v.get("score", 0) if isinstance(v, dict) else 0
-                parts.append(f"{k}={s}")
-            scored_lines.append(f"  - {company}{tag} (overall {_overall_raw(cs)}/5): " + " · ".join(parts))
+                parts.append(f"{k}={'N/K' if s is None else s}")
+            overall_disp = _overall_raw(cs)
+            overall_disp = "N/K" if overall_disp == -1 else f"{overall_disp}/5"
+            scored_lines.append(f"  - {company}{tag} (overall {overall_disp}): " + " · ".join(parts))
         scored_summary = (
             "Scores below are computed deterministically from CQC data and are FINAL. "
             "Do not re-score; build the narrative on these exact numbers.\n"

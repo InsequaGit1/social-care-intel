@@ -38,7 +38,10 @@ EVIDENCE_COLOURS = {
 }
 
 
-def _score_badge(score: int) -> str:
+def _score_badge(score) -> str:
+    if score is None:
+        return ('<span style="background:#bdbdbd;color:#424242;padding:2px 8px;'
+                'border-radius:4px;font-weight:bold;">N/K</span>')
     colour = SCORE_COLOURS.get(score, "#999")
     return f'<span style="background:{colour};color:white;padding:2px 8px;border-radius:4px;font-weight:bold;">{score}/5</span>'
 
@@ -207,11 +210,20 @@ class DashboardRenderer:
             tcol1, tcol2, tcol3, tcol4 = st.columns(4)
             with tcol1:
                 rating = cqc.get("rating", "Unknown")
-                st.metric("CQC Rating", rating)
+                scope = cqc.get("rating_scope", "location")
+                label = f"CQC Rating ({scope})" if rating != "Unknown" else "CQC Rating"
+                st.metric(label, rating)
+                if rating != "Unknown" and not cqc.get("rating_is_current", True):
+                    rdate = (cqc.get("rating_report_date") or "")[:10]
+                    st.caption(f"⚠️ Historic rating{(' — ' + rdate) if rdate else ''}; "
+                               f"no current published rating")
                 if cqc.get("profile_url"):
                     st.caption(f"[CQC profile]({cqc['profile_url']})")
             with tcol2:
                 st.metric("Last Inspection", cqc.get("last_inspection_date", "Unknown"))
+                prov_rating = cqc.get("provider_rating", "")
+                if prov_rating and prov_rating != cqc.get("rating"):
+                    st.caption(f"Provider-level rating: {prov_rating}")
             with tcol3:
                 st.metric("Companies House #", ch.get("number", "Unknown"))
             with tcol4:
@@ -224,6 +236,30 @@ class DashboardRenderer:
                 flags.append("✅ Companies House" if status.get("companies_house_found") else "❌ Companies House")
                 flags.append("✅ Contracts" if status.get("contracts_found") else "❌ Contracts")
                 st.caption("Verified data sources: " + " · ".join(flags))
+
+            # Related CQC records (e.g. a deregistered predecessor entity with a
+            # different rating). Shown so a rating seen on the CQC website for a
+            # sibling entity is never a surprise.
+            related = cqc.get("related_records") or []
+            if related:
+                st.markdown("**Related CQC records (same/similar name):**")
+                for rel in related:
+                    bits = [f"**{rel.get('name', '?')}**"]
+                    r = rel.get("rating", "Unknown")
+                    if r and r != "Unknown":
+                        cur = "" if rel.get("rating_is_current", True) else " (historic)"
+                        rd = (rel.get("rating_report_date") or rel.get("last_inspection_date") or "")[:10]
+                        bits.append(f"{r}{cur}{(' · ' + rd) if rd else ''}")
+                    if rel.get("registration_status"):
+                        bits.append(rel["registration_status"])
+                    if rel.get("local_authority"):
+                        bits.append(rel["local_authority"])
+                    line = " — ".join(bits)
+                    url = rel.get("cqc_url", "")
+                    if url.startswith("http"):
+                        line += f" · [view]({url})"
+                    st.markdown(f"- {line}")
+                st.caption("⚠️ Verify which record is the operating entity before relying on a rating.")
 
         # Flag rejected procurement entries (hallucinated URLs)
         rejected = self.r.get("procurement_rejected", [])
@@ -392,9 +428,26 @@ class DashboardRenderer:
     def _tab_competitor_landscape(self):
         st.subheader("Competitor Landscape")
         competitors = self.r.get("competitors", [])
+        excluded = self.r.get("excluded_competitors", [])
 
         if not competitors:
             st.warning("No competitors were identified. Broaden your geographic area or add known competitors manually.")
+        if excluded:
+            with st.expander(f"🚫 {len(excluded)} candidate(s) considered but not included — why", expanded=False):
+                st.caption(
+                    "Candidates are excluded when their service/location fit is poor and no "
+                    "contract with the commissioner could be evidenced, or when they fall "
+                    "outside the top slots. Shown for transparency — nothing is silently dropped."
+                )
+                for e in excluded:
+                    line = f"- **{e.get('name', '?')}** — {e.get('reason', '')}"
+                    if e.get("cqc_rating") and e["cqc_rating"] != "Unknown":
+                        line += f" (CQC: {e['cqc_rating']})"
+                    url = e.get("cqc_profile_url", "")
+                    if url.startswith("http"):
+                        line += f" · [CQC]({url})"
+                    st.markdown(line)
+        if not competitors:
             return
 
         # Summary table — now includes authoritative CQC structured data
@@ -638,7 +691,7 @@ class DashboardRenderer:
         # benchmarking_criteria field. Self-heals against version mismatches
         # where the criteria list and scored keys drift apart.
         first_scores = next(iter(benchmarking.values()), {})
-        criteria_list = list(first_scores.keys())
+        criteria_list = [k for k, v in first_scores.items() if isinstance(v, dict)]
 
         # Put cqc_rating first if present, then everything else in saved order
         if "cqc_rating" in criteria_list:
@@ -671,7 +724,8 @@ class DashboardRenderer:
         def _raw_overall(company):
             ov = benchmarking[company].get("overall_bid_threat", {})
             if isinstance(ov, dict):
-                return ov.get("raw_score", ov.get("score", 0))
+                v = ov.get("raw_score", ov.get("score", 0))
+                return v if v is not None else -1  # N/K rows sort to the bottom
             return 0
 
         ordered = sorted(
@@ -700,6 +754,14 @@ class DashboardRenderer:
                     )
                 else:
                     s = val.get("score", 0) if isinstance(val, dict) else (val if isinstance(val, (int, float)) else 0)
+                    if isinstance(val, dict) and val.get("score") is None:
+                        # Insufficient data — unknown is not the same as bad
+                        cells.append(
+                            '<td style="padding:6px;border-bottom:1px solid #e0e0e0;text-align:center;'
+                            'background:#eeeeee;color:#616161;font-weight:bold;" '
+                            'title="Insufficient public data — not scored">N/K</td>'
+                        )
+                        continue
                     try:
                         s_int = int(s)
                     except (ValueError, TypeError):
@@ -990,7 +1052,7 @@ class DashboardRenderer:
                             row_vals.append(str(val) if val else "Unknown")
                     else:
                         score = val.get("score", "—") if isinstance(val, dict) else val
-                        row_vals.append(str(score))
+                        row_vals.append("N/K" if score is None else str(score))
                 lines.append(f"| {company} | " + " | ".join(row_vals) + " |")
             lines.append("")
 

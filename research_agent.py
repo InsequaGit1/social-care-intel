@@ -199,22 +199,13 @@ class ResearchAgent:
         master_competitors = raw_data.get("competitors", [])
         sources = combined_sources[: cfg.max_sources]
 
-        # Merge discovered competitors with master research competitors (dedupe by name),
-        # then select the final list. CQC-verified locals fill most slots, but up to 3
-        # slots are reserved for LLM/procurement-discovered players (framework
-        # incumbents, national bidders) that CQC area data alone would never surface.
-        merged_all = _merge_competitors(discovered_competitors, master_competitors)
-        cqc_part = [c for c in merged_all if c.get("cqc_data")]
-        other_part = [c for c in merged_all if not c.get("cqc_data")]
-        reserve = min(3, len(other_part))
-        competitors = cqc_part[: max(0, cfg.max_competitors - reserve)] + other_part[:reserve]
-        if len(competitors) < cfg.max_competitors:
-            used = {c.get("name") for c in competitors}
-            competitors += [c for c in cqc_part if c.get("name") not in used][: cfg.max_competitors - len(competitors)]
+        # Build the full candidate POOL (no slicing yet — final selection is by
+        # relevance, after CQC data has been attached to everything possible).
+        pool = _merge_competitors(discovered_competitors, master_competitors)
         status_callback(
-            f"  Combined competitor list: {len(competitors)} providers "
-            f"({sum(1 for c in competitors if c.get('cqc_data'))} CQC-verified local, "
-            f"{sum(1 for c in competitors if not c.get('cqc_data'))} from procurement/LLM discovery)"
+            f"  Candidate pool: {len(pool)} providers "
+            f"({sum(1 for c in pool if c.get('cqc_data'))} CQC-verified local, "
+            f"{sum(1 for c in pool if not c.get('cqc_data'))} from procurement/LLM discovery)"
         )
 
         # ---- Phase 1.5 (Deep only): Drill down on multi-provider contracts ----
@@ -227,27 +218,38 @@ class ResearchAgent:
                 p["awarded_providers"] = drill.get("awarded_providers", [])
                 p["shortlisted_providers"] = drill.get("shortlisted_providers", [])
                 p["drilldown_notes"] = drill.get("notes", "")
-                # Promote drilled-down provider names into competitor list (if not already there)
+                # Promote drilled-down provider names into the pool (if new)
                 for ap in drill.get("awarded_providers", []) + drill.get("shortlisted_providers", []):
                     name = ap.get("name", "").strip()
-                    if name and not any(c.get("name", "").lower() == name.lower() for c in competitors):
-                        competitors.append({
+                    if name and not any(c.get("name", "").lower() == name.lower() for c in pool):
+                        pool.append({
                             "name": name,
                             "selection_rationale": f"Drilled from contract '{p.get('title', '')}' — {ap.get('evidence_url', '')}",
                             "source_urls": [ap.get("evidence_url", "")],
                         })
-            competitors = competitors[: cfg.max_competitors]
 
         # ---- Phase 2a (BOTH modes): attach authoritative CQC data ----
-        # Cheap CQC lookup (API only, no LLM) for any competitor that doesn't
-        # already carry CQC data from the area-discovery step. This is what
-        # makes Quick Scan genuinely useful: real ratings, beds, specialisms.
-        if competitors and self.cqc and self.brave:
-            need = [c for c in competitors if not c.get("cqc_data")]
+        # Cheap CQC lookup (API only, no LLM) for pool candidates that don't
+        # already carry CQC data (LLM/procurement-discovered ones). Capped to
+        # bound Brave usage; drill-down/procurement entries attach first.
+        if pool and self.cqc and self.brave:
+            need = [c for c in pool if not c.get("cqc_data")]
+            # Contract-evidenced (drill-down) candidates attach first
+            need.sort(key=lambda c: str(c.get("selection_rationale", "")).startswith("Drilled"),
+                      reverse=True)
+            need = need[:8]
             if need:
-                status_callback(f"  🏷 Attaching CQC data to {len(need)} competitor(s)…")
+                status_callback(f"  🏷 Attaching CQC data to {len(need)} candidate(s)…")
                 for comp in need:
                     self._attach_cqc_only(comp, status_callback)
+
+        # ---- Phase 2a.5 (BOTH modes): relevance selection ----
+        # Keep only candidates that plausibly compete for this work (service/
+        # location fit, or hard contract evidence with the commissioner), ranked
+        # so the matrix shows the TOP relevant competitors, not a random sample.
+        competitors, excluded_competitors = self._select_relevant(
+            pool, target_profile, cfg.max_competitors, status_callback,
+        )
 
         # ---- Phase 2b (Deep only): LLM enrichment (Companies House, contracts) ----
         if not cfg.is_quick and competitors:
@@ -335,6 +337,7 @@ class ResearchAgent:
             "procurement_rejected": rejected,
             "target_profile": target_profile,
             "competitors": competitors,
+            "excluded_competitors": excluded_competitors,
             "commissioner_priorities": raw_data.get("commissioner_priorities", []),
             "sources": sources,
             "evidence_gaps": raw_data.get("evidence_gaps", []),
@@ -484,6 +487,45 @@ class ResearchAgent:
             summary["_area_verified"] = area_verified
             summary["_fuzzy_match"] = is_fuzzy
 
+            # For the TARGET: near-identically-named CQC records often exist
+            # (predecessor entities, e.g. "Ashley Care LLP" deregistered vs the
+            # current "Ashley Care"). Silently discarding them hides history a
+            # consultant needs — collect up to 2 related records and show both.
+            if strict_area and candidates:
+                headline_id = (self.cqc.extract_id_from_url(best.get("url", "")) or {}).get("id")
+                seen_ids = {headline_id}
+                related = []
+                for _, c_score, c_res, c_name in sorted(candidates, key=lambda x: x[0], reverse=True):
+                    cid = (self.cqc.extract_id_from_url(c_res.get("url", "")) or {}).get("id")
+                    if not cid or cid in seen_ids:
+                        continue
+                    seen_ids.add(cid)
+                    raw_rel = self.cqc.fetch_from_url(c_res.get("url", ""))
+                    if not raw_rel:
+                        continue
+                    rel = self.cqc.summarise_provider_profile(raw_rel)
+                    related.append({
+                        "name": rel.get("name", c_name),
+                        "registration_status": rel.get("registration_status", ""),
+                        "rating": rel.get("overall_rating", "Unknown"),
+                        "rating_is_current": rel.get("rating_is_current", True),
+                        "rating_report_date": rel.get("rating_report_date", ""),
+                        "last_inspection_date": rel.get("last_inspection_date", ""),
+                        "local_authority": rel.get("local_authority", ""),
+                        "cqc_url": rel.get("cqc_url", ""),
+                        "match_confidence": round(c_score, 2),
+                    })
+                    if len(related) >= 2:
+                        break
+                if related:
+                    summary["related_records"] = related
+                    for rel in related:
+                        status_callback(
+                            f"    ℹ️ Related CQC record: '{rel['name']}' — {rel['rating']}"
+                            f"{'' if rel['rating_is_current'] else ' (historic)'} · "
+                            f"{rel['registration_status'] or 'status unknown'}"
+                        )
+
             beds = summary.get("number_of_beds")
             beds_str = f", {beds} beds" if beds else ""
             area_note = "" if area_verified else f" ⚠️ in {summary.get('local_authority') or 'other area'}"
@@ -602,6 +644,10 @@ class ResearchAgent:
                 "rating": api_rating,
                 "rating_is_current": cqc_data.get("rating_is_current", True),
                 "rating_report_date": cqc_data.get("rating_report_date", ""),
+                "rating_scope": cqc_data.get("rating_scope", "location"),
+                "provider_rating": cqc_data.get("provider_rating", ""),
+                "provider_rating_is_current": cqc_data.get("provider_rating_is_current", True),
+                "related_records": cqc_data.get("related_records", []),
                 "last_inspection_date": cqc_data.get("last_inspection_date", "Unknown"),
                 "registration_date": cqc_data.get("registration_date", ""),
                 "number_of_beds": cqc_data.get("number_of_beds"),
@@ -737,12 +783,13 @@ class ResearchAgent:
 
     def _augment_rating(self, summary: Dict[str, Any]) -> Dict[str, Any]:
         """
-        If a location has no current overall rating, fall back to the provider's
-        rating (ratings often sit at provider level for multi-site or
-        domiciliary providers). Mutates and returns the summary.
+        Fetch the provider-level rating and keep it ALONGSIDE the location
+        rating (never silently replacing it — the location rating is the more
+        specific fact and the user should see both when they differ). Only if
+        the location has no rating at all, current or historic, does the
+        provider rating become the headline, tagged rating_scope='provider'.
+        Mutates and returns the summary.
         """
-        if summary.get("overall_rating") not in ("Unknown", "", None):
-            return summary
         pid = summary.get("provider_id")
         if not pid:
             return summary
@@ -752,11 +799,21 @@ class ResearchAgent:
             prov = None
         if prov:
             ps = self.cqc.summarise_provider_profile(prov)
-            if ps.get("overall_rating") not in ("Unknown", "", None):
-                summary["overall_rating"] = ps["overall_rating"]
-                if ps.get("sub_ratings") and not summary.get("sub_ratings"):
-                    summary["sub_ratings"] = ps["sub_ratings"]
-                summary["_rating_from_provider"] = True
+            prov_rating = ps.get("overall_rating")
+            if prov_rating not in ("Unknown", "", None):
+                summary["provider_rating"] = prov_rating
+                summary["provider_rating_is_current"] = ps.get("rating_is_current", True)
+                summary["provider_rating_report_date"] = ps.get("rating_report_date", "")
+                # Location has no rating at all → provider rating becomes headline
+                if summary.get("overall_rating") in ("Unknown", "", None):
+                    summary["overall_rating"] = prov_rating
+                    summary["rating_is_current"] = ps.get("rating_is_current", True)
+                    summary["rating_report_date"] = ps.get("rating_report_date", "")
+                    if ps.get("sub_ratings") and not summary.get("sub_ratings"):
+                        summary["sub_ratings"] = ps["sub_ratings"]
+                    summary["rating_scope"] = "provider"
+                else:
+                    summary["rating_scope"] = "location"
         return summary
 
     def _discover_competitors_cqc(self, status_callback: StatusCallback = _noop) -> List[Dict[str, Any]]:
@@ -926,6 +983,86 @@ class ResearchAgent:
 
         data, _ = research_json(self.provider, prompt, max_tokens=6000, label="Contract drill-down")
         return data if data else {"awarded_providers": [], "shortlisted_providers": [], "notes": "No JSON returned"}
+
+    # ------------------------------------------------------------------
+    # Phase 2a.5: relevance selection over the candidate pool
+    # ------------------------------------------------------------------
+
+    def _select_relevant(self, pool: List[Dict[str, Any]], target_profile: Dict[str, Any],
+                         max_n: int, status_callback: StatusCallback = _noop):
+        """
+        Deterministically pick the TOP relevant competitors from the pool.
+
+        Relevant = service/location fit >= 3 against the target's CQC profile,
+        OR contract evidence with the commissioner from an official source
+        (a national bidder without local CQC registration but holding a local
+        contract is very much a competitor). Everything else is excluded WITH A
+        REASON and reported, so the consultant sees why a name was left out
+        rather than the matrix filling up with 1/5 noise.
+        """
+        import scoring
+
+        target_cqc = (target_profile.get("cqc") or {})
+        target_stub = {
+            "service_types": target_cqc.get("service_types", []) or self._target_service_types,
+            "specialisms": target_cqc.get("specialisms", []),
+            "local_authority": target_cqc.get("local_authority", "") or self._target_local_authority,
+        }
+
+        ranked = []
+        excluded = []
+        for c in pool:
+            evidenced = scoring.validated_contracts(c.get("known_contracts_with_commissioner"))
+            cqc_d = c.get("cqc_data") or {}
+            if cqc_d:
+                fit = scoring.score_service_location_fit(
+                    {**cqc_d, "overall_rating": c.get("cqc_rating", "Unknown")}, target_stub,
+                )["score"]
+            else:
+                fit = 0  # no matched CQC record
+            if fit >= 3 or evidenced:
+                rank_key = (
+                    bool(evidenced),
+                    fit,
+                    self._RATING_RANK.get(c.get("cqc_rating"), 0),
+                    cqc_d.get("number_of_beds") or 0,
+                )
+                c["relevance_fit"] = fit
+                ranked.append((rank_key, c))
+            else:
+                if not cqc_d:
+                    reason = "No CQC record matched and no evidenced local contracts"
+                else:
+                    la = cqc_d.get("local_authority", "") or "another area"
+                    reason = (f"Low service/location fit ({fit}/5 — registered in {la}) "
+                              f"and no evidenced local contracts")
+                excluded.append({
+                    "name": c.get("name", "Unknown"),
+                    "reason": reason,
+                    "service_location_fit": fit,
+                    "cqc_rating": c.get("cqc_rating", "Unknown"),
+                    "cqc_profile_url": c.get("cqc_profile_url", ""),
+                })
+
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        selected = [c for _, c in ranked[:max_n]]
+        overflow = [c for _, c in ranked[max_n:]]
+        # Pool overflow beyond max_n is excluded too, but for capacity not relevance
+        for c in overflow:
+            excluded.append({
+                "name": c.get("name", "Unknown"),
+                "reason": f"Relevant but outside the top {max_n} by rating/fit/scale",
+                "service_location_fit": c.get("relevance_fit", 0),
+                "cqc_rating": c.get("cqc_rating", "Unknown"),
+                "cqc_profile_url": c.get("cqc_profile_url", ""),
+            })
+
+        status_callback(
+            f"  🎛 Relevance selection: kept top {len(selected)} of {len(pool)} candidates "
+            f"({sum(1 for e in excluded if 'outside the top' in e['reason'])} relevant overflow, "
+            f"{sum(1 for e in excluded if 'outside the top' not in e['reason'])} excluded as low-relevance)"
+        )
+        return selected, excluded
 
     # ------------------------------------------------------------------
     # Per-competitor enrichment (Deep Scan only)

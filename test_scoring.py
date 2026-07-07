@@ -97,8 +97,8 @@ def test_reproducibility():
     a = scoring.score_company(copy.deepcopy(STRONG_COMP), copy.deepcopy(TARGET))
     b = scoring.score_company(copy.deepcopy(STRONG_COMP), copy.deepcopy(TARGET))
     # Compare just the score integers across all criteria
-    sa = {k: v["score"] for k, v in a.items() if k != "cqc_rating"}
-    sb = {k: v["score"] for k, v in b.items() if k != "cqc_rating"}
+    sa = {k: v["score"] for k, v in a.items() if isinstance(v, dict) and "score" in v}
+    sb = {k: v["score"] for k, v in b.items() if isinstance(v, dict) and "score" in v}
     check("identical scores on repeat", sa == sb)
 
 
@@ -168,7 +168,7 @@ def test_all_scores_in_range():
     for comp in (TARGET, STRONG_COMP, WEAK_COMP, OUT_OF_AREA):
         s = scoring.score_company(comp, TARGET)
         for k, v in s.items():
-            if k == "cqc_rating":
+            if k == "cqc_rating" or not isinstance(v, dict) or "score" not in v:
                 continue
             if not (1 <= v["score"] <= 5):
                 check(f"{comp['name']}/{k} in range", False)
@@ -180,7 +180,8 @@ def test_all_scores_in_range():
 def test_justifications_present():
     print("\n== Every score carries a justification ==")
     s = scoring.score_company(STRONG_COMP, TARGET)
-    ok = all(v.get("justification") for k, v in s.items() if k != "cqc_rating")
+    ok = all(v.get("justification") for k, v in s.items()
+             if isinstance(v, dict) and k != "cqc_rating")
     check("all criteria have justifications", ok)
 
 
@@ -231,11 +232,70 @@ def test_target_without_cqc():
                     "cqc_data": {}}
     try:
         s = scoring.score_company(STRONG_COMP, blank_target)
-        ok_range = all(1 <= s[k]["score"] <= 5 for k in s if k != "cqc_rating")
+        ok_range = all(1 <= v["score"] <= 5 for k, v in s.items()
+                       if isinstance(v, dict) and "score" in v and k != "cqc_rating")
         check("competitor still scored 1-5 with blank target", ok_range)
         check("no crash on blank target", True)
     except Exception as exc:
         check(f"no crash on blank target (got {exc})", False)
+
+
+def test_insufficient_data_is_nk():
+    print("\n== Insufficient data → N/K, never fake 1/5s ==")
+    no_data = {"name": "Mystery Provider", "cqc_rating": "Unknown", "cqc_data": {}}
+    s = scoring.score_company(no_data, TARGET)
+    check("flagged data_sufficient=False", s.get("data_sufficient") is False)
+    check("quality is None (N/K)", s["quality_compliance"]["score"] is None)
+    check("overall is None (N/K)", s["overall_bid_threat"]["score"] is None)
+    check("justification says insufficient", "insufficient" in s["quality_compliance"]["justification"].lower())
+
+    # But contract evidence still counts on its own
+    with_contract = {"name": "National Bidder", "cqc_rating": "Unknown", "cqc_data": {},
+                     }
+    contracts = [{"title": "Care at Home Lot 1",
+                  "source_url": "https://www.southend.gov.uk/downloads/file/6845/contract-register"}]
+    s2 = scoring.score_company(with_contract, TARGET, contracts=contracts)
+    check("evidenced contract still scores track record", s2["local_track_record"]["score"] == 3)
+
+    # Rated companies unaffected
+    s3 = scoring.score_company(STRONG_COMP, TARGET)
+    check("rated company still fully scored", s3.get("data_sufficient") is True
+          and s3["overall_bid_threat"]["score"] is not None)
+
+
+def test_relevance_selection():
+    print("\n== Relevance selection (top relevant kept, rest excluded with reasons) ==")
+    from research_agent import ResearchAgent
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent._target_local_authority = "Southend-on-Sea"
+    agent._target_service_types = ["Homecare agencies"]
+
+    target_profile = {"cqc": {"service_types": ["Homecare agencies"],
+                              "specialisms": ["Dementia"],
+                              "local_authority": "Southend-on-Sea"}}
+    local_good = {"name": "Local Good Co", "cqc_rating": "Good", "cqc_verified": True,
+                  "cqc_data": {"service_types": ["Homecare agencies"], "specialisms": ["Dementia"],
+                               "local_authority": "Southend-on-Sea", "number_of_beds": 0,
+                               "registration_date": "2012-01-01"}}
+    faraway = {"name": "Faraway Co", "cqc_rating": "Good", "cqc_verified": True,
+               "cqc_data": {"service_types": ["Homecare agencies"], "specialisms": [],
+                            "local_authority": "Manchester", "number_of_beds": 0,
+                            "registration_date": "2012-01-01"}}
+    ghost = {"name": "Ghost Co", "cqc_rating": "Unknown"}  # no CQC data, no contracts
+    national = {"name": "National Bidder", "cqc_rating": "Unknown",
+                "known_contracts_with_commissioner": [
+                    {"title": "Care at Home Lot 2",
+                     "source_url": "https://www.southend.gov.uk/downloads/file/6845/register"}]}
+
+    selected, excluded = agent._select_relevant(
+        [local_good, faraway, ghost, national], target_profile, 3, lambda m: None)
+    names = [c["name"] for c in selected]
+    ex_names = [e["name"] for e in excluded]
+    check("local relevant provider kept", "Local Good Co" in names)
+    check("contract-evidenced national kept despite no CQC", "National Bidder" in names)
+    check("no-data no-evidence candidate excluded", "Ghost Co" in ex_names)
+    check("out-of-area no-evidence candidate excluded", "Faraway Co" in ex_names)
+    check("every exclusion carries a reason", all(e.get("reason") for e in excluded))
 
 
 def test_end_to_end_reproducibility():
@@ -257,8 +317,8 @@ def test_end_to_end_reproducibility():
     def matrix():
         b = agent._benchmark(all_companies=[copy.deepcopy(c) for c in companies],
                              research_results={"competitors": companies}, website_analyses={})
-        return {name: {k: (v.get("score") if isinstance(v, dict) and "score" in v else v.get("value"))
-                       for k, v in cs.items()}
+        return {name: {k: (v.get("score") if "score" in v else v.get("value"))
+                       for k, v in cs.items() if isinstance(v, dict)}
                 for name, cs in b["scores"].items()}
 
     m1, m2 = matrix(), matrix()
@@ -276,6 +336,8 @@ if __name__ == "__main__":
     test_justifications_present()
     test_contract_evidence_gate()
     test_ch_number_validation()
+    test_insufficient_data_is_nk()
+    test_relevance_selection()
     test_target_without_cqc()
     test_end_to_end_reproducibility()
     print()

@@ -121,11 +121,13 @@ def main() -> int:
         for name, cs in bench.items():
             ov = cs.get("overall_bid_threat", {})
             raw = ov.get("raw_score", ov.get("score", 0)) if isinstance(ov, dict) else 0
+            raw = -1 if raw is None else raw
             cqc = cs.get("cqc_rating", {})
             rating = cqc.get("value", "?") if isinstance(cqc, dict) else "?"
             rows.append((raw, name, rating))
         for raw, name, rating in sorted(rows, reverse=True):
-            print(f"  {raw:>4}/5  {name}  (CQC: {rating})")
+            disp = " N/K" if raw == -1 else f"{raw:>4}/5"
+            print(f"  {disp}  {name}  (CQC: {rating})")
     print(f"\nSaved: {out_dir / 'results.json'}")
     return 0
 

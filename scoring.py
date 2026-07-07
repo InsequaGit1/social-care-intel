@@ -217,9 +217,14 @@ def score_service_location_fit(cqc: Dict[str, Any], target_cqc: Dict[str, Any]) 
 
     comp_types = set(_norm_list(cqc.get("service_types")))
     targ_types = set(_norm_list(target_cqc.get("service_types")))
+    same_la = bool(comp_la and targ_la and comp_la == targ_la)
+    la_known_different = bool(comp_la and targ_la and comp_la != targ_la)
     if comp_types and targ_types and (comp_types & targ_types):
-        score += 2
-        reasons.append("same CQC service type(s)")
+        # Same service earns full credit locally; a same-service provider in a
+        # KNOWN different authority is only a partial fit (unlikely bidder here)
+        score += 1 if la_known_different else 2
+        reasons.append("same CQC service type(s)"
+                       + (" but registered in a different authority" if la_known_different else ""))
     elif comp_types and not targ_types:
         score += 1  # we couldn't compare, but it's a recognised social-care type
         reasons.append("recognised social-care provider")
@@ -385,13 +390,58 @@ def score_company(company: Dict[str, Any], target: Dict[str, Any],
 
     target_cqc = dict(target.get("cqc_data") or {})
 
-    result: Dict[str, Any] = {}
-    result["service_location_fit"] = score_service_location_fit(cqc, target_cqc)
-    result["quality_compliance"] = score_quality_compliance(cqc)
-    result["local_track_record"] = score_local_track_record(cqc, target_cqc, contracts)
-    result["delivery_strength"] = score_delivery_strength(cqc)
-    result["strategic_differentiators"] = score_strategic_differentiators(cqc, website_evidence_quality)
-    result["overall_bid_threat"] = score_overall(result, company.get("cqc_rating", "Unknown"))
+    # Data sufficiency: with no matched CQC record at all, numeric scores would
+    # just measure the absence of data and read as "terrible performer". Mark
+    # such companies N/K (score None) instead — unknown is not the same as bad.
+    rating_known = str(cqc.get("overall_rating") or "Unknown").lower() not in ("unknown", "", "none")
+    data_sufficient = bool(
+        rating_known or cqc.get("sub_ratings") or cqc.get("registration_date")
+        or cqc.get("service_types")
+    )
+    evidenced = validated_contracts(contracts)
+
+    if not data_sufficient:
+        nk = {
+            "score": None,
+            "justification": "No CQC record matched — insufficient public data to score (N/K).",
+            "source": cqc.get("cqc_url", ""),
+            "basis": {"data_sufficient": False},
+        }
+        result: Dict[str, Any] = {
+            "service_location_fit": dict(nk),
+            "quality_compliance": dict(nk),
+            "delivery_strength": dict(nk),
+            "strategic_differentiators": dict(nk),
+        }
+        # Contract evidence can stand on its own even without a CQC record
+        if evidenced:
+            result["local_track_record"] = {
+                "score": 3,
+                "justification": (f"Local track record: {len(evidenced)} contract(s) evidenced on "
+                                  f"official procurement sources (no CQC record for other criteria)."),
+                "source": evidenced[0].get("source_url", ""),
+                "basis": {"evidenced_contracts": len(evidenced), "data_sufficient": False},
+            }
+        else:
+            result["local_track_record"] = dict(nk)
+        result["overall_bid_threat"] = {
+            "score": None,
+            "raw_score": None,
+            "justification": "Insufficient public data — not scored (N/K). "
+                             "Verify this provider manually before treating as a competitor.",
+            "source": "",
+            "basis": {"data_sufficient": False},
+        }
+    else:
+        result = {}
+        result["service_location_fit"] = score_service_location_fit(cqc, target_cqc)
+        result["quality_compliance"] = score_quality_compliance(cqc)
+        result["local_track_record"] = score_local_track_record(cqc, target_cqc, contracts)
+        result["delivery_strength"] = score_delivery_strength(cqc)
+        result["strategic_differentiators"] = score_strategic_differentiators(cqc, website_evidence_quality)
+        result["overall_bid_threat"] = score_overall(result, company.get("cqc_rating", "Unknown"))
+
+    result["data_sufficient"] = data_sufficient
 
     # CQC rating as the authoritative word value
     result["cqc_rating"] = {
@@ -404,7 +454,7 @@ def score_company(company: Dict[str, Any], target: Dict[str, Any],
 
     # Mark each scored criterion as deterministic + add a flat source field
     for k, v in result.items():
-        if k == "cqc_rating":
+        if k == "cqc_rating" or not isinstance(v, dict):
             continue
         v["method"] = "deterministic (CQC-derived)"
         v.setdefault("analyst_inference", False)
